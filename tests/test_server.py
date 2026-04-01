@@ -5,34 +5,29 @@ Live API tests: pytest tests/ -m live -v
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 import respx
-import httpx
 
 from seco_labor_mcp.server import (
-    DatasetSearchInput,
-    UnemploymentInput,
-    YouthUnemploymentInput,
-    JobSeekersInput,
-    OpenPositionsInput,
-    MonthlyReportInput,
-    DatasetDetailsInput,
-    ResponseFormat,
     CANTON_CODES,
     CKAN_BASE,
-    seco_search_datasets,
+    DatasetDetailsInput,
+    DatasetSearchInput,
+    MonthlyReportInput,
+    OpenPositionsInput,
+    ResponseFormat,
+    UnemploymentInput,
+    YouthUnemploymentInput,
     seco_get_dataset,
+    seco_get_monthly_report_url,
+    seco_get_open_positions,
     seco_get_unemployment_overview,
     seco_get_youth_unemployment,
-    seco_get_job_seekers,
-    seco_get_open_positions,
-    seco_get_monthly_report_url,
-    seco_get_unemployment_by_occupation,
     seco_list_cantons,
+    seco_search_datasets,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

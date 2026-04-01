@@ -18,14 +18,11 @@ Primary use cases:
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import os
 from datetime import datetime
-from enum import Enum
-from functools import lru_cache
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
 import httpx
 from fastmcp import FastMCP
@@ -82,7 +79,7 @@ HTTP_TIMEOUT = 30.0
 # ---------------------------------------------------------------------------
 
 
-class ResponseFormat(str, Enum):
+class ResponseFormat(StrEnum):
     """Output format for tool responses."""
     MARKDOWN = "markdown"
     JSON = "json"
@@ -118,7 +115,7 @@ class UnemploymentInput(BaseModel):
     """Input for unemployment statistics queries."""
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
-    canton: Optional[str] = Field(
+    canton: str | None = Field(
         default=None,
         description=(
             "Filter by canton code (2-letter). "
@@ -127,7 +124,7 @@ class UnemploymentInput(BaseModel):
         ),
         max_length=2,
     )
-    year: Optional[int] = Field(
+    year: int | None = Field(
         default=None,
         description="Filter by year (e.g. 2024, 2025). Leave empty for latest available data.",
         ge=2000,
@@ -143,7 +140,7 @@ class YouthUnemploymentInput(BaseModel):
     """Input for youth unemployment queries (15–24 year olds)."""
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
-    canton: Optional[str] = Field(
+    canton: str | None = Field(
         default=None,
         description=(
             "Filter by canton code (2-letter, e.g. 'ZH'). "
@@ -161,7 +158,7 @@ class JobSeekersInput(BaseModel):
     """Input for job seeker (Stellensuchende) queries."""
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
-    canton: Optional[str] = Field(
+    canton: str | None = Field(
         default=None,
         description="Filter by canton code (e.g. 'ZH'). Leave empty for national totals.",
         max_length=2,
@@ -773,7 +770,7 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     try:
         search_result = await _ckan_search("Jugendarbeitslose Alter", limit=5)
         datasets = search_result.get("result", {}).get("results", [])
-    except Exception as e:
+    except Exception:
         datasets = []
 
     if params.response_format == ResponseFormat.JSON:
@@ -902,7 +899,7 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
     try:
         search_result = await _ckan_search("Stellensuchende Kantone", limit=5)
         datasets = search_result.get("result", {}).get("results", [])
-    except Exception as e:
+    except Exception:
         datasets = []
 
     if params.response_format == ResponseFormat.JSON:
@@ -991,7 +988,7 @@ async def seco_get_open_positions(params: OpenPositionsInput) -> str:
     try:
         search_result = await _ckan_search("offene Stellen Vakanzen", limit=5)
         datasets = search_result.get("result", {}).get("results", [])
-    except Exception as e:
+    except Exception:
         datasets = []
 
     if params.response_format == ResponseFormat.JSON:
@@ -1090,10 +1087,6 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
         Reports are published on the first Thursday of the following month.
         Example: January 2026 data → published February 6, 2026.
     """
-    month_names_de = [
-        "", "januar", "februar", "maerz", "april", "mai", "juni",
-        "juli", "august", "september", "oktober", "november", "dezember",
-    ]
     month_names_display = [
         "", "Januar", "Februar", "März", "April", "Mai", "Juni",
         "Juli", "August", "September", "Oktober", "November", "Dezember",
@@ -1192,7 +1185,7 @@ async def seco_get_unemployment_by_occupation(
     try:
         search_result = await _ckan_search("Berufshauptgruppe Berufsgruppe arbeitslose", limit=5)
         datasets = search_result.get("result", {}).get("results", [])
-    except Exception as e:
+    except Exception:
         datasets = []
 
     if response_format == "json":
