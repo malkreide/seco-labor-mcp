@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seco-labor-mcp"
+version = "0.1.0"
+description = "MCP server for Swiss labor market data (SECO/AMSTAT) – Arbeitsmarkt & Stellensuche"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "malkreide" }]
+keywords = [
+    "mcp",
+    "seco",
+    "swiss",
+    "labor-market",
+    "arbeitsmarkt",
+    "unemployment",
+    "arbeitslosigkeit",
+    "anthropic",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastmcp>=1.0.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.21.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+seco-labor-mcp = "seco_labor_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/malkreide/seco-labor-mcp"
+Repository = "https://github.com/malkreide/seco-labor-mcp"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seco_labor_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
