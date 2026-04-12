@@ -6,6 +6,10 @@ Ein MCP-Server (Model Context Protocol) für Schweizer Arbeitsmarktdaten des **S
 
 [🇬🇧 English Version](README.md)
 
+<p align="center">
+  <img src="assets/demo.png" alt="Demo: Claude fragt Jugendarbeitslosigkeit über seco-labor-mcp Tool Call ab" width="720">
+</p>
+
 ---
 
 ## Übersicht
@@ -100,6 +104,20 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 - Automatisches CSV-Caching (24h TTL)
 - Direkte XLSX-Verarbeitung für kantonale Aufschlüsselungen
 - Integration mit `zh-education-mcp` für Schulamt-spezifische Korrelationen
+
+---
+
+## 🛡️ Sicherheit & Grenzen
+
+| Aspekt | Details |
+|--------|---------|
+| **Zugriff** | Read-only (`readOnlyHint: true`) — der Server kann keine Daten verändern oder löschen |
+| **Personendaten** | Keine Personendaten — alle Quellen sind aggregierte, anonymisierte Statistiken |
+| **Rate Limits** | Keine externen Limits; Server begrenzt Abfragen auf 20 Ergebnisse; 30 s HTTP-Timeout |
+| **Authentifizierung** | Kein API-Schlüssel erforderlich — opendata.swiss und arbeit.swiss sind öffentlich zugänglich |
+| **Lizenzen** | SECO-Daten unter [Creative Commons CCZero](https://creativecommons.org/publicdomain/zero/1.0/) |
+| **Nutzungsbedingungen** | Gemäss ToS von: [opendata.swiss](https://opendata.swiss/de/terms-of-use), [SECO](https://www.seco.admin.ch), [arbeit.swiss](https://www.arbeit.swiss) |
+| **DSG / DSGVO** | Vollständig konform — keine Personendaten übermittelt oder gespeichert |
 
 ---
 

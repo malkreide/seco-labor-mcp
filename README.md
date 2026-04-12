@@ -11,6 +11,10 @@ An MCP (Model Context Protocol) server for Swiss labor market data from **SECO**
 
 [🇩🇪 Deutsche Version](README.de.md)
 
+<p align="center">
+  <img src="assets/demo.png" alt="Demo: Claude queries youth unemployment via seco-labor-mcp tool call" width="720">
+</p>
+
 ---
 
 ## Overview
@@ -200,6 +204,20 @@ Occupations with ≥5% unemployment rate must be reported to the RAV before post
 
 SECO data published on opendata.swiss is under **Creative Commons CCZero** (public domain).  
 Source: Staatssekretariat für Wirtschaft (SECO) — [seco.admin.ch](https://www.seco.admin.ch)
+
+---
+
+## 🛡️ Safety & Limits
+
+| Aspect | Details |
+|--------|---------|
+| **Access** | Read-only (`readOnlyHint: true`) — the server cannot modify or delete any data |
+| **Personal data** | No personal data — all sources are aggregated, anonymous public statistics |
+| **Rate limits** | No enforced external limits; server caps queries at 20 results by default; 30 s HTTP timeout |
+| **Authentication** | No API keys required — opendata.swiss and arbeit.swiss are publicly accessible |
+| **Licenses** | SECO data under [Creative Commons CCZero](https://creativecommons.org/publicdomain/zero/1.0/) (public domain) |
+| **Terms of Service** | Subject to ToS of: [opendata.swiss](https://opendata.swiss/de/terms-of-use), [SECO](https://www.seco.admin.ch), [arbeit.swiss](https://www.arbeit.swiss) |
+| **GDPR / DSG** | Fully compliant — no personal data transmitted or stored; all data is official public statistics |
 
 ---
 
