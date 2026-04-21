@@ -23,6 +23,7 @@ Dieser Server verbindet KI-Modelle mit offiziellen Schweizer Arbeitsmarktstatist
 
 **Anker-Demo-Query:**  
 *«Welche Berufsgruppen haben im Kanton Zürich die höchste Jugendarbeitslosigkeit, und welche Lehrberufe unterliegen der Stellenmeldepflicht?»*
+[→ Weitere Anwendungsbeispiele nach Zielgruppe →](EXAMPLES.md)
 
 ---
 

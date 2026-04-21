@@ -28,6 +28,7 @@ This server connects AI models to Swiss labor market statistics — unemployment
 
 **Anchor query:**  
 *"Welche Berufsgruppen haben im Kanton Zürich die höchste Jugendarbeitslosigkeit, und welche Lehrberufe unterliegen der Stellenmeldepflicht?"*
+[→ More use cases by audience →](EXAMPLES.md)
 
 ---
 
