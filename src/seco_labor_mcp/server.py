@@ -50,7 +50,7 @@ _HTTP_KWARGS: dict[str, Any] = {
     # (DNS-rebinding / redirect TOCTOU).
     "follow_redirects": False,
     "headers": {
-        "User-Agent": "seco-labor-mcp/0.2.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
+        "User-Agent": "seco-labor-mcp/0.3.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
         "Accept": "application/json, text/csv, */*",
     },
 }
