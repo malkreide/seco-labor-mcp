@@ -10,6 +10,7 @@ import httpx
 import pytest
 import respx
 
+from seco_labor_mcp import server as _server_mod
 from seco_labor_mcp.server import (
     CANTON_CODES,
     CKAN_BASE,
@@ -20,6 +21,9 @@ from seco_labor_mcp.server import (
     ResponseFormat,
     UnemploymentInput,
     YouthUnemploymentInput,
+    _detect_latest_period,
+    _parse_csv,
+    _select_rows_for_canton,
     seco_get_dataset,
     seco_get_monthly_report_url,
     seco_get_open_positions,
@@ -28,6 +32,15 @@ from seco_labor_mcp.server import (
     seco_list_cantons,
     seco_search_datasets,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_csv_cache():
+    """Reset the module-level CSV cache between tests so mocked responses
+    from one test don't leak into another."""
+    _server_mod._CSV_CACHE.clear()
+    yield
+    _server_mod._CSV_CACHE.clear()
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -477,6 +490,165 @@ class TestHelperFunctions:
         assert CANTON_CODES["GE"] == "Genève"
         assert CANTON_CODES["TI"] == "Ticino"
         assert CANTON_CODES["JU"] == "Jura"
+
+
+# ---------------------------------------------------------------------------
+# CSV parser tests (pure functions, no HTTP)
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_CSV_SEMICOLON = (
+    "Datum;Kanton;Arbeitslose;Quote_pct\n"
+    "2025-10;CH;140000;3.0\n"
+    "2025-10;ZH;25000;2.5\n"
+    "2025-10;GE;15000;4.4\n"
+    "2025-11;CH;143500;3.1\n"
+    "2025-11;ZH;25800;2.6\n"
+    "2025-11;GE;15200;4.5\n"
+    "2025-12;CH;147275;3.2\n"
+    "2025-12;ZH;26500;2.7\n"
+    "2025-12;GE;15400;4.5\n"
+)
+
+
+class TestCsvParser:
+    """Tests for the defensive CSV parser helpers."""
+
+    def test_parse_semicolon_csv(self):
+        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
+        assert parsed["parsed"] is True
+        assert parsed["delimiter"] == ";"
+        assert parsed["headers"] == ["Datum", "Kanton", "Arbeitslose", "Quote_pct"]
+        assert len(parsed["rows"]) == 9
+
+    def test_parse_comma_csv(self):
+        comma_csv = "year,canton,unemployed\n2025,ZH,25000\n2025,GE,15000\n"
+        parsed = _parse_csv(comma_csv)
+        assert parsed["parsed"] is True
+        assert parsed["delimiter"] == ","
+        assert len(parsed["rows"]) == 2
+
+    def test_parse_empty_csv(self):
+        assert _parse_csv("")["parsed"] is False
+        assert _parse_csv("only_header_no_rows\n")["parsed"] is False
+
+    def test_detect_latest_period(self):
+        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
+        assert _detect_latest_period(parsed) == "2025-12"
+
+    def test_detect_period_returns_none_when_absent(self):
+        parsed = _parse_csv("a;b\n1;2\n3;4\n")
+        assert _detect_latest_period(parsed) is None
+
+    def test_select_rows_canton_filter(self):
+        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
+        zh = _select_rows_for_canton(parsed, "ZH", limit=10)
+        assert len(zh) == 3
+        assert all("ZH" in row for row in zh)
+
+    def test_select_rows_no_canton(self):
+        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
+        all_recent = _select_rows_for_canton(parsed, None, limit=4)
+        assert len(all_recent) == 4
+
+    def test_select_rows_unknown_canton(self):
+        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
+        assert _select_rows_for_canton(parsed, "XX", limit=5) == []
+
+
+class TestUnemploymentOverviewLiveCsv:
+    """Tests that the overview tool surfaces parsed CSV data when available."""
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_overview_with_live_csv_json(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
+        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
+            return_value=httpx.Response(
+                200,
+                content=SAMPLE_CSV_SEMICOLON.encode("utf-8"),
+                headers={"content-type": "text/csv"},
+            )
+        )
+        inp = UnemploymentInput(response_format=ResponseFormat.JSON)
+        result = await seco_get_unemployment_overview(inp)
+        data = json.loads(result)
+
+        assert data["data_available"] is True
+        assert "live" in data
+        assert data["live"]["data_source"] == "live_csv"
+        assert data["live"]["reference_period"] == "2025-12"
+        assert data["live"]["total_rows"] == 9
+        assert data["live"]["headers"] == ["Datum", "Kanton", "Arbeitslose", "Quote_pct"]
+        # snapshot must NOT be included when live data is available
+        assert "reference_snapshot" not in data
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_overview_live_csv_canton_filter_zh(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
+        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
+            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
+        )
+        inp = UnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
+        result = await seco_get_unemployment_overview(inp)
+        data = json.loads(result)
+
+        sample = data["live"]["sample_rows"]
+        assert len(sample) == 3
+        assert all("ZH" in row for row in sample)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_overview_live_csv_markdown(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
+        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
+            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
+        )
+        inp = UnemploymentInput()
+        result = await seco_get_unemployment_overview(inp)
+
+        assert "Live-Daten" in result
+        assert "2025-12" in result
+        # The static snapshot warning must NOT appear when live data is shown
+        assert "statischer Referenz-Snapshot" not in result
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_overview_falls_back_to_snapshot_when_csv_404(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
+        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
+            return_value=httpx.Response(404)
+        )
+        inp = UnemploymentInput(response_format=ResponseFormat.JSON)
+        result = await seco_get_unemployment_overview(inp)
+        data = json.loads(result)
+
+        assert data["data_available"] is False
+        assert "reference_snapshot" in data
+        assert data["reference_snapshot"]["data_source"] == "static_reference"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_overview_cache_reuses_response(self):
+        """Second call within TTL must not trigger a second HTTP fetch."""
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
+        csv_route = respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
+            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
+        )
+        await seco_get_unemployment_overview(UnemploymentInput())
+        await seco_get_unemployment_overview(UnemploymentInput())
+        assert csv_route.call_count == 1
 
 
 # ---------------------------------------------------------------------------

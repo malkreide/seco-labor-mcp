@@ -18,11 +18,14 @@ Primary use cases:
 
 from __future__ import annotations
 
+import csv as _csv
 import json
 import os
+import re
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
+from io import StringIO
 from typing import Any
 
 import httpx
@@ -311,6 +314,97 @@ def _pct(v: Any) -> str:
         return f"{float(v):.1f}%"
     except (ValueError, TypeError):
         return str(v)
+
+
+# ---------------------------------------------------------------------------
+# CSV parser (defensive: no schema assumptions about SECO column names)
+# ---------------------------------------------------------------------------
+
+_CSV_TTL = timedelta(hours=24)
+# url -> (fetched_at, text)
+_CSV_CACHE: dict[str, tuple[datetime, str]] = {}
+
+_PERIOD_RE = re.compile(r"\b(20\d{2})[-/.\s](0?[1-9]|1[0-2])\b")
+
+
+async def _fetch_text_cached(url: str) -> str | None:
+    """Fetch text with a 24 h TTL cache. Tries UTF-8 then Windows-1252
+    (common for Swiss admin CSV exports). Returns None on any failure."""
+    now = datetime.now()
+    cached = _CSV_CACHE.get(url)
+    if cached and now - cached[0] < _CSV_TTL:
+        return cached[1]
+    try:
+        async with _client_scope() as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            try:
+                text = resp.content.decode("utf-8")
+            except UnicodeDecodeError:
+                text = resp.content.decode("cp1252", errors="replace")
+            _CSV_CACHE[url] = (now, text)
+            return text
+    except Exception:
+        return None
+
+
+def _parse_csv(text: str) -> dict[str, Any]:
+    """Best-effort CSV parse: detect delimiter, return headers + all rows.
+    Returns {"parsed": False, ...} if the document is unreadable."""
+    sample = text[:4096]
+    try:
+        delimiter = _csv.Sniffer().sniff(sample, delimiters=";,\t|").delimiter
+    except _csv.Error:
+        # Heuristic fallback: German Excel CSV is ';', Anglo CSV is ','
+        delimiter = ";" if sample.count(";") > sample.count(",") else ","
+
+    try:
+        reader = _csv.reader(StringIO(text), delimiter=delimiter)
+        rows = [r for r in reader if r]  # drop empty lines
+    except Exception as exc:
+        return {"parsed": False, "reason": f"csv reader failed: {exc}"}
+
+    if len(rows) < 2:
+        return {"parsed": False, "reason": "fewer than 2 rows"}
+
+    return {
+        "parsed": True,
+        "delimiter": delimiter,
+        "headers": rows[0],
+        "rows": rows[1:],
+    }
+
+
+def _detect_latest_period(parsed: dict[str, Any]) -> str | None:
+    """Scan recent rows for a YYYY-MM token and return the latest one found."""
+    if not parsed.get("parsed"):
+        return None
+    found: set[tuple[int, int]] = set()
+    # Scan last 200 rows — enough to detect period without parsing the entire file
+    for row in parsed["rows"][-200:]:
+        for cell in row:
+            m = _PERIOD_RE.search(str(cell))
+            if m:
+                found.add((int(m.group(1)), int(m.group(2))))
+    if not found:
+        return None
+    y, mo = max(found)
+    return f"{y}-{mo:02d}"
+
+
+def _select_rows_for_canton(
+    parsed: dict[str, Any],
+    canton: str | None,
+    limit: int = 10,
+) -> list[list[str]]:
+    """Return up to `limit` most recent rows.
+    If `canton` is given, restrict to rows where any cell exactly matches the code."""
+    if not parsed.get("parsed"):
+        return []
+    rows = parsed["rows"]
+    if canton:
+        rows = [r for r in rows if any(c.strip() == canton for c in r)]
+    return rows[-limit:]
 
 
 # ---------------------------------------------------------------------------
@@ -636,29 +730,33 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
             f"Valid codes: {', '.join(sorted(CANTON_CODES.keys()))}"
         )
 
-    # Try to fetch actual data from discovered resources
-    csv_data = None
-    source_url = None
-    dataset_title = None
-
+    # Try to fetch + parse actual CSV data from discovered resources.
+    # First CSV that parses cleanly wins.
+    live: dict[str, Any] | None = None
     for ds in datasets:
         for resource in ds.get("resources", []):
             fmt = resource.get("format", "").upper()
-            if fmt in ("CSV", "XLSX", "XLS"):
-                url = resource.get("url", "")
-                if url and "arbeitslos" in url.lower():
-                    try:
-                        async with _client_scope() as client:
-                            resp = await client.get(url)
-                            resp.raise_for_status()
-                            if fmt == "CSV":
-                                csv_data = resp.text
-                                source_url = url
-                                dataset_title = _extract_title(ds.get("title", ""))
-                                break
-                    except Exception:
-                        continue
-        if csv_data:
+            url = resource.get("url", "")
+            if fmt != "CSV" or not url or "arbeitslos" not in url.lower():
+                continue
+            text = await _fetch_text_cached(url)
+            if not text:
+                continue
+            parsed = _parse_csv(text)
+            if not parsed.get("parsed"):
+                continue
+            live = {
+                "source_url": url,
+                "dataset_title": _extract_title(ds.get("title", "")),
+                "dataset_id": ds.get("name", ds.get("id", "")),
+                "headers": parsed["headers"],
+                "total_rows": len(parsed["rows"]),
+                "detected_period": _detect_latest_period(parsed),
+                "sample_rows": _select_rows_for_canton(parsed, canton_filter, limit=10),
+                "delimiter": parsed["delimiter"],
+            }
+            break
+        if live:
             break
 
     # Build response with available data
@@ -666,28 +764,44 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
     filter_desc = f"Kanton {canton_name} ({canton_filter})" if canton_name else "Schweiz national"
 
     if params.response_format == ResponseFormat.JSON:
-        result_data = {
+        result_data: dict[str, Any] = {
             "query": {
                 "canton": canton_filter,
                 "canton_name": canton_name,
                 "year": params.year,
                 "filter": filter_desc,
             },
-            "data_available": csv_data is not None,
-            "source_url": source_url,
-            "dataset_title": dataset_title,
-            "note": (
-                "For detailed tabular data, use seco_get_dataset with the dataset ID "
-                "from seco_search_datasets to get direct CSV download links."
-            ),
-            "reference_snapshot": {
+            "data_available": live is not None,
+        }
+        if live:
+            result_data["live"] = {
+                "data_source": "live_csv",
+                "reference_period": live["detected_period"],
+                "dataset_title": live["dataset_title"],
+                "dataset_id": live["dataset_id"],
+                "source_url": live["source_url"],
+                "headers": live["headers"],
+                "total_rows": live["total_rows"],
+                "sample_rows": live["sample_rows"],
+                "note": (
+                    "Best-effort parse of the SECO CSV. Headers and row order are "
+                    "preserved verbatim from the upstream resource — no canonical "
+                    "column mapping is assumed."
+                ),
+            }
+        else:
+            result_data["note"] = (
+                "Live CSV fetch/parse failed. Falling back to the static reference "
+                "snapshot below. Use seco_get_dataset with a dataset id from "
+                "seco_search_datasets to get the resource URL directly."
+            )
+            result_data["reference_snapshot"] = {
                 "data_source": "static_reference",
                 "reference_period": "2025-12",
                 "snapshot_taken": "2026-01-09",
                 "warning": (
-                    "These are STATIC reference values from the December 2025 SECO press release. "
-                    "They are NOT fetched live and may be outdated. For current data, follow "
-                    "verify_live_at and parse the linked CSV/PDF."
+                    "STATIC reference values from the December 2025 SECO press release. "
+                    "They are NOT fetched live and may be outdated."
                 ),
                 "verify_live_at": (
                     "https://www.arbeit.swiss/secoalv/de/home/menue/"
@@ -700,26 +814,54 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
                     "year_avg_2025_rate_pct": 2.8,
                     "youth_15_24_count_approx": "available in monthly data",
                 },
-            },
-        }
+            }
         return json.dumps(result_data, ensure_ascii=False, indent=2)
 
     # Markdown response
-    lines = [
-        f"## Arbeitslosigkeit {filter_desc}\n",
-        "> ⚠️ **Hinweis zur Datenherkunft**: Die folgenden Zahlen sind ein **statischer "
-        "Referenz-Snapshot** vom Dezember 2025 (SECO-Pressemitteilung 2026-01-09). "
-        "Sie werden nicht live abgefragt. Für aktuelle Werte siehe den Link am Ende.\n",
-        "### Referenz-Snapshot (Dezember 2025, statisch)\n",
-        "| Kennzahl | Wert |",
-        "|----------|------|",
-        "| Arbeitslose (total) | 147'275 |",
-        "| Arbeitslosenquote | 3.2% |",
-        "| Saisonbereinigte Quote | 3.0% |",
-        "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
-        "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
-        "| Jahresdurchschnitt 2025 | 2.8% |",
-    ]
+    lines = [f"## Arbeitslosigkeit {filter_desc}\n"]
+
+    if live:
+        period = live["detected_period"] or "unbekannt"
+        lines.append(
+            f"### ✅ Live-Daten aus SECO-CSV (Periode: {period})\n"
+            f"**Quelle:** [{live['dataset_title']}]({live['source_url']})\n"
+            f"**Dataset-ID:** `{live['dataset_id']}` · "
+            f"**Zeilen gesamt:** {live['total_rows']}\n"
+        )
+        headers = live["headers"]
+        sample = live["sample_rows"]
+        if sample:
+            lines.append(
+                f"**Letzte {len(sample)} Zeile(n)"
+                + (f" für Kanton {canton_filter}" if canton_filter else "")
+                + ":**\n"
+            )
+            lines.append("| " + " | ".join(headers) + " |")
+            lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+            for row in sample:
+                # Pad/truncate to header width
+                padded = (row + [""] * len(headers))[: len(headers)]
+                lines.append("| " + " | ".join(str(c) for c in padded) + " |")
+            lines.append("")
+        else:
+            lines.append(
+                f"*Keine Zeilen mit Kanton-Code `{canton_filter}` in dieser CSV gefunden.*\n"
+            )
+    else:
+        lines.extend([
+            "> ⚠️ **Hinweis zur Datenherkunft**: Live-CSV-Abruf fehlgeschlagen. "
+            "Die folgenden Zahlen sind ein **statischer Referenz-Snapshot** vom Dezember 2025 "
+            "(SECO-Pressemitteilung 2026-01-09). Für aktuelle Werte siehe den Link am Ende.\n",
+            "### Referenz-Snapshot (Dezember 2025, statisch)\n",
+            "| Kennzahl | Wert |",
+            "|----------|------|",
+            "| Arbeitslose (total) | 147'275 |",
+            "| Arbeitslosenquote | 3.2% |",
+            "| Saisonbereinigte Quote | 3.0% |",
+            "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
+            "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
+            "| Jahresdurchschnitt 2025 | 2.8% |",
+        ])
 
     if datasets:
         lines.append("\n### Gefundene Datensätze für Detail-Downloads\n")
@@ -728,22 +870,27 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
             ds_id = ds.get("name", ds.get("id", ""))
             lines.append(f"- **{title}** → ID: `{ds_id}`")
 
-    lines.append(
-        "\n### Kantone mit höchster Arbeitslosigkeit "
-        "(statischer Snapshot April 2025 – nicht live)\n"
-    )
-    lines.append("| Kanton | Quote |")
-    lines.append("|--------|-------|")
-    cantonal_data = [
-        ("JU", "Jura", 4.8), ("GE", "Genève", 4.5), ("NE", "Neuchâtel", 4.2),
-        ("VD", "Vaud", 3.8), ("TI", "Ticino", 3.5),
-    ]
-    for code, name, rate in cantonal_data:
-        marker = " ◀" if canton_filter == code else ""
-        lines.append(f"| {code} – {name} | {rate}%{marker} |")
+    # Show the hardcoded April 2025 cantonal ranking only as a fallback;
+    # when live data is present, it would confuse the reader.
+    if not live:
+        lines.append(
+            "\n### Kantone mit höchster Arbeitslosigkeit "
+            "(statischer Snapshot April 2025 – nicht live)\n"
+        )
+        lines.append("| Kanton | Quote |")
+        lines.append("|--------|-------|")
+        cantonal_data = [
+            ("JU", "Jura", 4.8), ("GE", "Genève", 4.5), ("NE", "Neuchâtel", 4.2),
+            ("VD", "Vaud", 3.8), ("TI", "Ticino", 3.5),
+        ]
+        for code, name, rate in cantonal_data:
+            marker = " ◀" if canton_filter == code else ""
+            lines.append(f"| {code} – {name} | {rate}%{marker} |")
 
-    if canton_filter and canton_filter not in [c[0] for c in cantonal_data]:
-        lines.append(f"\n*Für genaue Daten zu Kanton {canton_name}: verwende seco_get_dataset.*")
+        if canton_filter and canton_filter not in [c[0] for c in cantonal_data]:
+            lines.append(
+                f"\n*Für genaue Daten zu Kanton {canton_name}: verwende seco_get_dataset.*"
+            )
 
     lines.append(
         "\n---\n"
