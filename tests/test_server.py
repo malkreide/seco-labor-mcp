@@ -20,10 +20,12 @@ from seco_labor_mcp.server import (
     OpenPositionsInput,
     ResponseFormat,
     UnemploymentInput,
+    UrlNotAllowedError,
     YouthUnemploymentInput,
     _detect_latest_period,
     _parse_csv,
     _select_rows_for_canton,
+    _validate_external_url,
     seco_get_dataset,
     seco_get_monthly_report_url,
     seco_get_open_positions,
@@ -244,15 +246,27 @@ class TestSecoSearchDatasets:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_search_http_error(self):
+    async def test_search_protocol_error_5xx_is_raised(self):
+        """OBS-001: 5xx is a protocol-level failure and must propagate as an
+        exception so the MCP layer reports isError, not as a success-string."""
         respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(503, text="Service Unavailable")
         )
         inp = DatasetSearchInput(query="test")
-        result = await seco_search_datasets(inp)
+        with pytest.raises(httpx.HTTPStatusError):
+            await seco_search_datasets(inp)
 
-        assert "Error" in result
-        assert "503" in result
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_search_execution_error_429_returns_string(self):
+        """OBS-001: 429 is an execution error — caller can back off and retry,
+        so we return a user-facing string instead of raising."""
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(429, text="Too Many Requests")
+        )
+        inp = DatasetSearchInput(query="test")
+        result = await seco_search_datasets(inp)
+        assert "Rate limit" in result
 
 
 class TestSecoGetDataset:
@@ -682,3 +696,48 @@ class TestLiveAPI:
         result = await seco_list_cantons()
         assert "ZH" in result
         assert "26" in result or len(CANTON_CODES) == 26
+
+
+# ---------------------------------------------------------------------------
+# SEC-004 SSRF validator
+# ---------------------------------------------------------------------------
+
+
+class TestSsrfValidator:
+    """Tests for _validate_external_url (SEC-004)."""
+
+    def test_https_public_host_is_allowed(self):
+        # No exception means the URL passed validation.
+        _validate_external_url("https://opendata.swiss/api/3/action/package_search")
+
+    def test_http_scheme_is_rejected(self):
+        with pytest.raises(UrlNotAllowedError, match="https"):
+            _validate_external_url("http://opendata.swiss/foo")
+
+    def test_file_scheme_is_rejected(self):
+        with pytest.raises(UrlNotAllowedError):
+            _validate_external_url("file:///etc/passwd")
+
+    def test_missing_host_is_rejected(self):
+        with pytest.raises(UrlNotAllowedError):
+            _validate_external_url("https:///just-a-path")
+
+    def test_loopback_literal_is_rejected(self):
+        with pytest.raises(UrlNotAllowedError, match="non-public"):
+            _validate_external_url("https://127.0.0.1/foo")
+
+    def test_private_rfc1918_literal_is_rejected(self):
+        with pytest.raises(UrlNotAllowedError, match="non-public"):
+            _validate_external_url("https://10.0.0.1/admin")
+
+    def test_link_local_metadata_endpoint_is_rejected(self):
+        # AWS/GCP/Azure metadata service shared address.
+        with pytest.raises(UrlNotAllowedError, match="non-public"):
+            _validate_external_url("https://169.254.169.254/latest/meta-data/")
+
+    @pytest.mark.asyncio
+    async def test_csv_fetch_skips_internal_url(self):
+        """_fetch_text_cached must return None when the URL is rejected,
+        without ever opening a socket to it."""
+        result = await _server_mod._fetch_text_cached("http://169.254.169.254/csv")
+        assert result is None
