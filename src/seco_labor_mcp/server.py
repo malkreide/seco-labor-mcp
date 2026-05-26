@@ -221,6 +221,16 @@ class OpenPositionsInput(BaseModel):
     )
 
 
+class OccupationInput(BaseModel):
+    """Input for unemployment-by-occupation (Berufshauptgruppe) queries."""
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' or 'json'.",
+    )
+
+
 class MonthlyReportInput(BaseModel):
     """Input for monthly press report URL lookup."""
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
@@ -1370,9 +1380,6 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
 
     period = f"{month_names_display[params.month]} {params.year}"
 
-    if params.month == 0:
-        return "Error: month must be between 1 and 12."
-
     lines = [
         f"## SECO Monatsbericht – {period}\n",
         f"**PDF-URL**: {url_pattern}\n",
@@ -1407,9 +1414,7 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
         "openWorldHint": True,
     },
 )
-async def seco_get_unemployment_by_occupation(
-    response_format: str = "markdown",
-) -> str:
+async def seco_get_unemployment_by_occupation(params: OccupationInput) -> str:
     """Get unemployment statistics broken down by occupation/profession (Berufshauptgruppe).
 
     This is the most directly relevant tool for Berufswahlberatung – it shows
@@ -1417,7 +1422,8 @@ async def seco_get_unemployment_by_occupation(
     and which Lehrberufe lead to stable employment outcomes.
 
     Args:
-        response_format (str): 'markdown' for human-readable, 'json' for structured data.
+        params (OccupationInput): Contains:
+            - response_format (str): 'markdown' for human-readable, 'json' for structured data.
 
     Returns:
         str: Unemployment by major occupational group (Berufshauptgruppe).
@@ -1444,7 +1450,7 @@ async def seco_get_unemployment_by_occupation(
     except Exception:
         datasets = []
 
-    if response_format == "json":
+    if params.response_format == ResponseFormat.JSON:
         return json.dumps(
             {
                 "note": (
