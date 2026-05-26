@@ -19,14 +19,17 @@ Primary use cases:
 from __future__ import annotations
 
 import csv as _csv
+import ipaddress
 import json
 import os
 import re
+import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import StrEnum
 from io import StringIO
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastmcp import FastMCP
@@ -40,7 +43,10 @@ HTTP_TIMEOUT = 30.0
 
 _HTTP_KWARGS: dict[str, Any] = {
     "timeout": HTTP_TIMEOUT,
-    "follow_redirects": True,
+    # SEC-004: do not auto-follow redirects so we cannot be tricked into
+    # fetching a private/loopback target after URL validation already passed
+    # (DNS-rebinding / redirect TOCTOU).
+    "follow_redirects": False,
     "headers": {
         "User-Agent": "seco-labor-mcp/0.1.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
         "Accept": "application/json, text/csv, */*",
@@ -262,6 +268,40 @@ class DatasetDetailsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class UrlNotAllowedError(ValueError):
+    """Raised by _validate_external_url for unsafe schemes or IP targets."""
+
+
+def _validate_external_url(url: str) -> None:
+    """SEC-004: Reject URLs that are not HTTPS or that resolve to a
+    private/loopback/link-local/multicast IP. Resolution happens here
+    (and not inside httpx), so combined with follow_redirects=False
+    this also prevents DNS-rebinding TOCTOU attacks."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise UrlNotAllowedError(f"only https:// is allowed, got: {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise UrlNotAllowedError(f"missing hostname in URL: {url!r}")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise UrlNotAllowedError(f"DNS resolution failed for {host!r}: {exc}") from exc
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise UrlNotAllowedError(
+                f"refusing to fetch URL pointing at non-public address: {ip}"
+            )
+
+
 @asynccontextmanager
 async def _client_scope():
     """Yield the shared pooled client when running under lifespan;
@@ -273,31 +313,32 @@ async def _client_scope():
             yield client
 
 
-def _handle_http_error(e: Exception) -> str:
-    """Produce an actionable error message for HTTP failures."""
+def _to_execution_error(e: Exception) -> str:
+    """OBS-001: For EXECUTION errors (4xx, refused URLs, malformed input),
+    return a user-facing string so the LLM can react and try something else.
+    For PROTOCOL errors (5xx, timeout, connect failure, unknown), re-raise
+    so FastMCP turns it into a proper JSON-RPC error with isError=true."""
+    if isinstance(e, UrlNotAllowedError):
+        return f"Error: URL rejected by SSRF policy ({e})."
     if isinstance(e, httpx.HTTPStatusError):
         code = e.response.status_code
         if code == 404:
             return (
-                "Error: Dataset not found (HTTP 404). "
+                "Error: Resource not found (HTTP 404). "
                 "Use seco_search_datasets to find valid dataset IDs."
             )
         if code == 429:
             return "Error: Rate limit exceeded. Please wait a moment before retrying."
-        if code == 503:
-            return (
-                f"Error: SECO/opendata.swiss service temporarily unavailable (HTTP 503). "
-                f"URL: {e.request.url}. Try again in a few minutes."
-            )
-        return f"Error: HTTP {code} – {e.response.text[:200]}"
-    if isinstance(e, httpx.TimeoutException):
-        return "Error: Request timed out. The SECO server may be slow – please retry."
-    if isinstance(e, httpx.ConnectError):
-        return (
-            "Error: Cannot connect to opendata.swiss. "
-            "Check your network connection or try again later."
-        )
-    return f"Error: Unexpected error – {type(e).__name__}: {e}"
+        if 500 <= code < 600:
+            # Upstream is broken — protocol-level concern, not something the
+            # LLM can fix by changing arguments. Surface it as a real error.
+            raise e
+        if 300 <= code < 400:
+            # follow_redirects=False yields these. Treat as execution error.
+            return f"Error: Unexpected redirect (HTTP {code}); refusing to follow."
+        return f"Error: HTTP {code}."
+    # Connectivity issues: protocol-level. Re-raise.
+    raise e
 
 
 def _fmt_number(n: Any) -> str:
@@ -329,12 +370,14 @@ _PERIOD_RE = re.compile(r"\b(20\d{2})[-/.\s](0?[1-9]|1[0-2])\b")
 
 async def _fetch_text_cached(url: str) -> str | None:
     """Fetch text with a 24 h TTL cache. Tries UTF-8 then Windows-1252
-    (common for Swiss admin CSV exports). Returns None on any failure."""
+    (common for Swiss admin CSV exports). Returns None on any failure
+    (including SSRF policy rejection and unexpected redirects)."""
     now = datetime.now()
     cached = _CSV_CACHE.get(url)
     if cached and now - cached[0] < _CSV_TTL:
         return cached[1]
     try:
+        _validate_external_url(url)
         async with _client_scope() as client:
             resp = await client.get(url)
             resp.raise_for_status()
@@ -529,7 +572,7 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
     try:
         result = await _ckan_search(params.query, params.limit)
     except Exception as e:
-        return _handle_http_error(e)
+        return _to_execution_error(e)
 
     datasets = result.get("result", {}).get("results", [])
 
@@ -594,7 +637,7 @@ async def seco_get_dataset(params: DatasetDetailsInput) -> str:
     try:
         result = await _ckan_get_dataset(params.dataset_id)
     except Exception as e:
-        return _handle_http_error(e)
+        return _to_execution_error(e)
 
     if not result.get("success"):
         return (
@@ -719,7 +762,7 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
         # Search for the latest unemployment dataset
         search_result = await _ckan_search("monatliche Arbeitslosenzahlen Kantone", limit=5)
     except Exception as e:
-        return _handle_http_error(e)
+        return _to_execution_error(e)
 
     datasets = search_result.get("result", {}).get("results", [])
 
@@ -1314,9 +1357,11 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
         f".download.pdf/{year_str}-{month_str}_Die_Lage_auf_dem_Arbeitsmarkt_DE.pdf"
     )
 
-    # Check availability
+    # Check availability (SEC-004: validate URL even though we constructed it
+    # — defense-in-depth against future code changes that introduce variable hosts).
     available = False
     try:
+        _validate_external_url(url_pattern)
         async with _client_scope() as client:
             resp = await client.head(url_pattern, timeout=10.0)
             available = resp.status_code == 200
