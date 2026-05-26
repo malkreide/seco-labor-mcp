@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -27,6 +28,38 @@ from typing import Any
 import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+# ---------------------------------------------------------------------------
+# HTTP client lifecycle (SDK-001: pooled client via FastMCP lifespan)
+# ---------------------------------------------------------------------------
+
+HTTP_TIMEOUT = 30.0
+
+_HTTP_KWARGS: dict[str, Any] = {
+    "timeout": HTTP_TIMEOUT,
+    "follow_redirects": True,
+    "headers": {
+        "User-Agent": "seco-labor-mcp/0.1.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
+        "Accept": "application/json, text/csv, */*",
+    },
+}
+
+# Module-level shared client, populated by the FastMCP lifespan.
+# Falls back to per-call clients when running outside a lifespan (e.g. unit tests).
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(_server: FastMCP):
+    """Initialise a single pooled httpx.AsyncClient for the server lifetime."""
+    global _HTTP_CLIENT
+    _HTTP_CLIENT = httpx.AsyncClient(**_HTTP_KWARGS)
+    try:
+        yield
+    finally:
+        await _HTTP_CLIENT.aclose()
+        _HTTP_CLIENT = None
+
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -41,6 +74,8 @@ mcp = FastMCP(
         "Particularly useful for educational planning, vocational guidance (Berufswahlberatung), "
         "and apprenticeship market monitoring (Lehrstellen-Monitoring)."
     ),
+    lifespan=lifespan,
+    mask_error_details=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -71,8 +106,6 @@ CANTON_CODES = {
     "AG": "Aargau", "TG": "Thurgau", "TI": "Ticino", "VD": "Vaud",
     "VS": "Valais", "NE": "Neuchâtel", "GE": "Genève", "JU": "Jura",
 }
-
-HTTP_TIMEOUT = 30.0
 
 # ---------------------------------------------------------------------------
 # Pydantic Models
@@ -226,16 +259,15 @@ class DatasetDetailsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_client() -> httpx.AsyncClient:
-    """Return a configured async HTTP client."""
-    return httpx.AsyncClient(
-        timeout=HTTP_TIMEOUT,
-        follow_redirects=True,
-        headers={
-            "User-Agent": "seco-labor-mcp/0.1.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
-            "Accept": "application/json, text/csv, */*",
-        },
-    )
+@asynccontextmanager
+async def _client_scope():
+    """Yield the shared pooled client when running under lifespan;
+    otherwise yield a per-call client (e.g. unit tests with respx)."""
+    if _HTTP_CLIENT is not None and not _HTTP_CLIENT.is_closed:
+        yield _HTTP_CLIENT
+    else:
+        async with httpx.AsyncClient(**_HTTP_KWARGS) as client:
+            yield client
 
 
 def _handle_http_error(e: Exception) -> str:
@@ -288,7 +320,7 @@ def _pct(v: Any) -> str:
 
 async def _ckan_search(query: str, limit: int = 10) -> dict:
     """Search opendata.swiss CKAN for SECO datasets."""
-    async with _get_client() as client:
+    async with _client_scope() as client:
         resp = await client.get(
             f"{CKAN_BASE}/package_search",
             params={
@@ -304,7 +336,7 @@ async def _ckan_search(query: str, limit: int = 10) -> dict:
 
 async def _ckan_get_dataset(dataset_id: str) -> dict:
     """Fetch a specific dataset from opendata.swiss CKAN."""
-    async with _get_client() as client:
+    async with _client_scope() as client:
         resp = await client.get(
             f"{CKAN_BASE}/package_show",
             params={"id": dataset_id},
@@ -616,7 +648,7 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
                 url = resource.get("url", "")
                 if url and "arbeitslos" in url.lower():
                     try:
-                        async with _get_client() as client:
+                        async with _client_scope() as client:
                             resp = await client.get(url)
                             resp.raise_for_status()
                             if fmt == "CSV":
@@ -648,16 +680,26 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
                 "For detailed tabular data, use seco_get_dataset with the dataset ID "
                 "from seco_search_datasets to get direct CSV download links."
             ),
-            "quick_reference": {
-                "dec_2025_national": {
+            "reference_snapshot": {
+                "data_source": "static_reference",
+                "reference_period": "2025-12",
+                "snapshot_taken": "2026-01-09",
+                "warning": (
+                    "These are STATIC reference values from the December 2025 SECO press release. "
+                    "They are NOT fetched live and may be outdated. For current data, follow "
+                    "verify_live_at and parse the linked CSV/PDF."
+                ),
+                "verify_live_at": (
+                    "https://www.arbeit.swiss/secoalv/de/home/menue/"
+                    "institutionen-medien/medienmitteilungen.html"
+                ),
+                "national": {
                     "unemployed": 147275,
                     "rate_pct": 3.2,
                     "seasonally_adjusted_rate_pct": 3.0,
                     "year_avg_2025_rate_pct": 2.8,
                     "youth_15_24_count_approx": "available in monthly data",
                 },
-                "source": "SECO Arbeitsmarktstatistik, Dezember 2025",
-                "published": "2026-01-09",
             },
         }
         return json.dumps(result_data, ensure_ascii=False, indent=2)
@@ -665,16 +707,18 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
     # Markdown response
     lines = [
         f"## Arbeitslosigkeit {filter_desc}\n",
-        "### Aktuellste verfügbare Daten (Dezember 2025)\n",
-        "> *Quelle: SECO Arbeitsmarktstatistik – www.amstat.ch*\n",
+        "> ⚠️ **Hinweis zur Datenherkunft**: Die folgenden Zahlen sind ein **statischer "
+        "Referenz-Snapshot** vom Dezember 2025 (SECO-Pressemitteilung 2026-01-09). "
+        "Sie werden nicht live abgefragt. Für aktuelle Werte siehe den Link am Ende.\n",
+        "### Referenz-Snapshot (Dezember 2025, statisch)\n",
         "| Kennzahl | Wert |",
         "|----------|------|",
-        "| Arbeitslose (total) | **147'275** |",
-        "| Arbeitslosenquote | **3.2%** |",
-        "| Saisonbereinigte Quote | **3.0%** |",
+        "| Arbeitslose (total) | 147'275 |",
+        "| Arbeitslosenquote | 3.2% |",
+        "| Saisonbereinigte Quote | 3.0% |",
         "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
         "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
-        "| Jahresdurchschnitt 2025 | **2.8%** |",
+        "| Jahresdurchschnitt 2025 | 2.8% |",
     ]
 
     if datasets:
@@ -684,7 +728,10 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
             ds_id = ds.get("name", ds.get("id", ""))
             lines.append(f"- **{title}** → ID: `{ds_id}`")
 
-    lines.append("\n### Kantone mit höchster Arbeitslosigkeit (April 2025)\n")
+    lines.append(
+        "\n### Kantone mit höchster Arbeitslosigkeit "
+        "(statischer Snapshot April 2025 – nicht live)\n"
+    )
     lines.append("| Kanton | Quote |")
     lines.append("|--------|-------|")
     cantonal_data = [
@@ -779,13 +826,20 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
                 "scope": scope,
                 "canton": canton_filter,
                 "data": {
-                    "period": "2025-12",
-                    "youth_15_24": {
-                        "note": (
-                            "Monatsdaten verfügbar via SECO opendata.swiss. "
-                            "Im August 2025: +2'186 Jugendarbeitslose vs. Vormonat (+18.6%)."
+                    "reference_snapshot": {
+                        "data_source": "static_reference",
+                        "reference_period": "2025-12",
+                        "warning": (
+                            "Static reference values, NOT fetched live. "
+                            "For current monthly figures, follow verify_live_at."
                         ),
-                        "source": "SECO Arbeitsmarktstatistik Dezember 2025",
+                        "verify_live_at": (
+                            "https://www.amstat.ch/v2/amstat_de.html"
+                        ),
+                        "example_youth_15_24": (
+                            "August 2025 (Snapshot): +2'186 Jugendarbeitslose "
+                            "vs. Vormonat (+18.6%)."
+                        ),
                     },
                     "seasonal_pattern": (
                         "Saisonal: Anstieg Juli/August (Schulabgänger), "
@@ -818,12 +872,14 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     lines = [
         f"## Jugendarbeitslosigkeit (15–24 Jahre) – {scope}\n",
         "> *Direkt relevant für Berufswahlberatung, Lehrstellenmonitoring und Bildungsplanung*\n",
-        "### Aktuelle Situation (Dezember 2025)\n",
+        "> ⚠️ **Hinweis**: Konkrete Zahlen unten sind ein **statischer Referenz-Snapshot** "
+        "(Dezember 2025) – nicht live abgefragt. Für aktuelle Werte siehe Datenquellen am Ende.\n",
+        "### Saisonales Muster (allgemein gültig)\n",
         "Die SECO-Monatsdaten weisen jeweils die Zahl der Jugendarbeitslosen (15–24 Jährige) aus.",
         "Diese Gruppe ist für das Schulamt besonders relevant:\n",
         "**Saisonales Muster:**",
         "- **Juli/August**: starker Anstieg (Schulabgänger ohne Anschlusslösung)",
-        "  - August 2025: +2'186 Jugendarbeitslose (+18.6% vs. Vormonat)",
+        "  - Beispielwert (Snapshot Aug 2025): +2'186 Jugendarbeitslose (+18.6% vs. Vormonat)",
         "- **September–November**: deutlicher Rückgang (Lehrstellenantritt, neue Ausbildungen)",
         "- Dies ist ein natürlicher Rhythmus – aber die Residualgrösse signalisiert Handlungsbedarf\n",
         "### Interpretation für die Bildungsplanung\n",
@@ -909,9 +965,15 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
                 "canton": canton_filter,
                 "concept_note": (
                     "Stellensuchende > Arbeitslose: Stellensuchende umfasst ALLE "
-                    "beim RAV gemeldeten Personen (inkl. Umschulung, vorübergehende Beschäftigung). "
-                    "Dezember 2025: ca. 233'900 Stellensuchende vs. 149'000 Arbeitslose."
+                    "beim RAV gemeldeten Personen (inkl. Umschulung, vorübergehende Beschäftigung)."
                 ),
+                "reference_snapshot": {
+                    "data_source": "static_reference",
+                    "reference_period": "2025-12",
+                    "warning": "Static snapshot, not live. Verify at amstat.ch.",
+                    "stellensuchende_approx": 233900,
+                    "arbeitslose_approx": 149000,
+                },
                 "datasets_found": [
                     {
                         "id": ds.get("name", ""),
@@ -928,11 +990,13 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
 
     lines = [
         f"## Stellensuchende – {scope}\n",
+        "> ⚠️ **Hinweis**: Konkrete Zahlen unten sind ein **statischer Snapshot** (Dez 2025), "
+        "nicht live abgefragt. Aktuelle Werte unter [amstat.ch](https://www.amstat.ch/v2/amstat_de.html).\n",
         "### Konzept: Stellensuchende vs. Arbeitslose\n",
         "> **Eselsbrücke**: Arbeitslose ⊂ Stellensuchende (Teilmenge!)\n",
         "Die Stellensuchendenquote ist immer **höher** als die Arbeitslosenquote:\n",
-        "| Kategorie | Dezember 2025 | Einschlusskriterium |",
-        "|-----------|---------------|---------------------|",
+        "| Kategorie | Snapshot Dez 2025 | Einschlusskriterium |",
+        "|-----------|-------------------|---------------------|",
         "| Arbeitslose | ~149'000 (3.2%) | Sofort vermittelbar, ohne Stelle |",
         "| Stellensuchende | ~233'900 | Alle RAV-Gemeldeten inkl. Programme |",
         "| Differenz | ~84'900 | In Umschulung, vorübergehender Beschäftigung etc. |\n",
@@ -1106,7 +1170,7 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
     # Check availability
     available = False
     try:
-        async with _get_client() as client:
+        async with _client_scope() as client:
             resp = await client.head(url_pattern, timeout=10.0)
             available = resp.status_code == 200
     except Exception:
@@ -1303,7 +1367,9 @@ async def seco_list_cantons() -> str:
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "sse":
-        mcp.settings.host = os.environ.get("HOST", "0.0.0.0")
+        # SEC-016: bind to loopback by default. Container deployments
+        # must explicitly set HOST=0.0.0.0 (see Dockerfile/README).
+        mcp.settings.host = os.environ.get("HOST", "127.0.0.1")
         mcp.settings.port = int(os.environ.get("PORT", "8000"))
         mcp.run(transport="sse")
     else:
