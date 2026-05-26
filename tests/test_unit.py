@@ -17,6 +17,7 @@ from seco_labor_mcp.server import (
     CKAN_BASE,
     DatasetDetailsInput,
     DatasetSearchInput,
+    JobSeekersInput,
     MonthlyReportInput,
     OccupationInput,
     OpenPositionsInput,
@@ -29,6 +30,7 @@ from seco_labor_mcp.server import (
     _select_rows_for_canton,
     _validate_external_url,
     seco_get_dataset,
+    seco_get_job_seekers,
     seco_get_monthly_report_url,
     seco_get_open_positions,
     seco_get_unemployment_by_occupation,
@@ -693,6 +695,180 @@ class TestUnemploymentOverviewLiveCsv:
         await seco_get_unemployment_overview(UnemploymentInput())
         await seco_get_unemployment_overview(UnemploymentInput())
         assert csv_route.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Live-CSV path for youth + job seekers
+# ---------------------------------------------------------------------------
+
+
+YOUTH_CSV = (
+    "Datum;Kanton;Altersgruppe;Arbeitslose\n"
+    "2025-11;CH;15-24;14200\n"
+    "2025-11;ZH;15-24;2700\n"
+    "2025-12;CH;15-24;15100\n"
+    "2025-12;ZH;15-24;2880\n"
+)
+
+JOB_SEEKERS_CSV = (
+    "Datum;Kanton;Stellensuchende;Arbeitslose\n"
+    "2025-11;CH;230100;143500\n"
+    "2025-11;GE;14800;13200\n"
+    "2025-12;CH;233900;147275\n"
+    "2025-12;GE;15100;13400\n"
+)
+
+
+def _ckan_search_with_csv(url: str, title: str = "Live") -> dict:
+    """Build a minimal CKAN search response advertising a single CSV resource."""
+    return {
+        "success": True,
+        "result": {
+            "count": 1,
+            "results": [
+                {
+                    "name": "live-dataset",
+                    "id": "live123",
+                    "title": {"de": title},
+                    "notes": {"de": "Live test dataset."},
+                    "metadata_modified": "2025-12-15T10:00:00",
+                    "tags": [],
+                    "resources": [
+                        {
+                            "id": "live-res",
+                            "name": {"de": "Live CSV"},
+                            "format": "CSV",
+                            "url": url,
+                            "size": 1024,
+                            "last_modified": "2025-12-12",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+
+class TestYouthLiveCsv:
+    """Live-CSV path for seco_get_youth_unemployment."""
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_youth_live_json(self):
+        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
+        )
+        respx.get(csv_url).mock(
+            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
+        )
+        inp = YouthUnemploymentInput(response_format=ResponseFormat.JSON)
+        result = await seco_get_youth_unemployment(inp)
+        data = json.loads(result)
+
+        assert data["data"]["data_source"] == "live_csv"
+        assert data["data"]["reference_period"] == "2025-12"
+        assert data["data"]["headers"] == ["Datum", "Kanton", "Altersgruppe", "Arbeitslose"]
+        assert "reference_snapshot" not in data["data"]
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_youth_live_markdown_shows_live_block(self):
+        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
+        )
+        respx.get(csv_url).mock(
+            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
+        )
+        result = await seco_get_youth_unemployment(YouthUnemploymentInput())
+        assert "Live-Daten" in result
+        assert "2025-12" in result
+        assert "statischer Referenz-Snapshot" not in result
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_youth_canton_filter_zh(self):
+        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
+        )
+        respx.get(csv_url).mock(
+            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
+        )
+        inp = YouthUnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
+        data = json.loads(await seco_get_youth_unemployment(inp))
+        sample = data["data"]["sample_rows"]
+        assert sample
+        assert all("ZH" in row for row in sample)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_youth_falls_back_to_snapshot_on_404(self):
+        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
+        )
+        respx.get(csv_url).mock(return_value=httpx.Response(404))
+        inp = YouthUnemploymentInput(response_format=ResponseFormat.JSON)
+        data = json.loads(await seco_get_youth_unemployment(inp))
+        assert "reference_snapshot" in data["data"]
+        assert data["data"]["reference_snapshot"]["data_source"] == "static_reference"
+
+
+class TestJobSeekersLiveCsv:
+    """Live-CSV path for seco_get_job_seekers."""
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_job_seekers_live_json(self):
+        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Stellensuchende"))
+        )
+        respx.get(csv_url).mock(
+            return_value=httpx.Response(200, content=JOB_SEEKERS_CSV.encode("utf-8"))
+        )
+        inp = JobSeekersInput(response_format=ResponseFormat.JSON)
+        result = await seco_get_job_seekers(inp)
+        data = json.loads(result)
+
+        assert "live" in data
+        assert data["live"]["data_source"] == "live_csv"
+        assert data["live"]["reference_period"] == "2025-12"
+        assert data["live"]["headers"] == [
+            "Datum", "Kanton", "Stellensuchende", "Arbeitslose",
+        ]
+        assert "reference_snapshot" not in data
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_job_seekers_canton_filter_ge(self):
+        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
+        )
+        respx.get(csv_url).mock(
+            return_value=httpx.Response(200, content=JOB_SEEKERS_CSV.encode("utf-8"))
+        )
+        inp = JobSeekersInput(canton="GE", response_format=ResponseFormat.JSON)
+        data = json.loads(await seco_get_job_seekers(inp))
+        sample = data["live"]["sample_rows"]
+        assert sample
+        assert all("GE" in row for row in sample)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_job_seekers_falls_back_to_snapshot_on_404(self):
+        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
+        )
+        respx.get(csv_url).mock(return_value=httpx.Response(404))
+        inp = JobSeekersInput(response_format=ResponseFormat.JSON)
+        data = json.loads(await seco_get_job_seekers(inp))
+        assert "reference_snapshot" in data
+        assert "live" not in data
 
 
 # ---------------------------------------------------------------------------
