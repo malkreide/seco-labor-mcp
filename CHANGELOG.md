@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-05-26
+## [0.3.0] - 2026-05-26
+
+Version 0.2.0 was reserved for an earlier GitHub-only release pointing at
+commit `89fc337` (pre-audit lint cleanup). Because PyPI version numbers are
+immutable, this audit-completion snapshot ships as 0.3.0 to avoid a confusing
+collision between the GitHub tag and what users would install from PyPI.
 
 This release closes all findings from a `mcp-audit-skill` audit cycle
 (2 HIGH, 4 MEDIUM, 3 LOW + 4 follow-up LOW from a re-audit).
