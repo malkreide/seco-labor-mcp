@@ -120,6 +120,16 @@ pip install seco-labor-mcp
 MCP_TRANSPORT=sse PORT=8000 seco-labor-mcp
 ```
 
+The SSE server binds to **`127.0.0.1` (loopback) by default** to prevent
+NeighborJack on shared networks. For container deployments where you actually
+need to accept traffic from outside the container, set `HOST=0.0.0.0`
+explicitly — ideally in your Dockerfile / orchestrator config, and only behind
+an upstream proxy or firewall:
+
+```bash
+HOST=0.0.0.0 MCP_TRANSPORT=sse PORT=8000 seco-labor-mcp   # container only
+```
+
 ### Development
 
 ```bash
