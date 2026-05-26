@@ -1,7 +1,8 @@
 """
-Tests for seco-labor-mcp
-Run: pytest tests/ -m "not live" -v
-Live API tests: pytest tests/ -m live -v
+Unit tests for seco-labor-mcp (mocked HTTP via respx, no internet access).
+
+Run: pytest tests/test_unit.py -v        # default in CI
+Live tests live in tests/test_live.py and are skipped unless --run-live.
 """
 
 import json
@@ -17,6 +18,7 @@ from seco_labor_mcp.server import (
     DatasetDetailsInput,
     DatasetSearchInput,
     MonthlyReportInput,
+    OccupationInput,
     OpenPositionsInput,
     ResponseFormat,
     UnemploymentInput,
@@ -29,20 +31,12 @@ from seco_labor_mcp.server import (
     seco_get_dataset,
     seco_get_monthly_report_url,
     seco_get_open_positions,
+    seco_get_unemployment_by_occupation,
     seco_get_unemployment_overview,
     seco_get_youth_unemployment,
     seco_list_cantons,
     seco_search_datasets,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_csv_cache():
-    """Reset the module-level CSV cache between tests so mocked responses
-    from one test don't leak into another."""
-    _server_mod._CSV_CACHE.clear()
-    yield
-    _server_mod._CSV_CACHE.clear()
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -193,6 +187,42 @@ class TestInputValidation:
     def test_response_format_values(self):
         assert ResponseFormat.MARKDOWN == "markdown"
         assert ResponseFormat.JSON == "json"
+
+    def test_occupation_input_default_markdown(self):
+        inp = OccupationInput()
+        assert inp.response_format == ResponseFormat.MARKDOWN
+
+    def test_occupation_input_rejects_unknown_format(self):
+        with pytest.raises(Exception):
+            OccupationInput(response_format="csv")  # type: ignore[arg-type]
+
+    def test_occupation_input_rejects_extra_fields(self):
+        with pytest.raises(Exception):
+            OccupationInput(canton="ZH")  # type: ignore[call-arg]
+
+
+class TestOccupationTool:
+    """Tests for seco_get_unemployment_by_occupation with the new Pydantic input."""
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_occupation_markdown(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json={"result": {"results": []}})
+        )
+        result = await seco_get_unemployment_by_occupation(OccupationInput())
+        assert "Berufshauptgruppe" in result or "Berufsgruppe" in result
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_occupation_json(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json={"result": {"results": []}})
+        )
+        inp = OccupationInput(response_format=ResponseFormat.JSON)
+        result = await seco_get_unemployment_by_occupation(inp)
+        data = json.loads(result)
+        assert "education_implications" in data
 
 
 # ---------------------------------------------------------------------------
@@ -663,39 +693,6 @@ class TestUnemploymentOverviewLiveCsv:
         await seco_get_unemployment_overview(UnemploymentInput())
         await seco_get_unemployment_overview(UnemploymentInput())
         assert csv_route.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# Live API Tests (skipped in CI)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.live
-class TestLiveAPI:
-    """Live API tests – require internet connection. Skipped in CI."""
-
-    @pytest.mark.asyncio
-    async def test_ckan_search_live(self):
-        """Test real CKAN search against opendata.swiss."""
-        inp = DatasetSearchInput(query="Arbeitslosigkeit Kantone", limit=3)
-        result = await seco_search_datasets(inp)
-        # Should return some content, not an error
-        assert "Error" not in result or "SECO" in result
-
-    @pytest.mark.asyncio
-    async def test_youth_unemployment_live(self):
-        """Live test for youth unemployment."""
-        inp = YouthUnemploymentInput(canton="ZH")
-        result = await seco_get_youth_unemployment(inp)
-        assert isinstance(result, str)
-        assert len(result) > 100
-
-    @pytest.mark.asyncio
-    async def test_cantons_list_live(self):
-        """Canton list requires no external calls."""
-        result = await seco_list_cantons()
-        assert "ZH" in result
-        assert "26" in result or len(CANTON_CODES) == 26
 
 
 # ---------------------------------------------------------------------------
