@@ -18,12 +18,14 @@ Primary use cases:
 
 from __future__ import annotations
 
+import asyncio
 import csv as _csv
 import ipaddress
 import json
 import os
 import re
 import socket
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -48,7 +50,7 @@ _HTTP_KWARGS: dict[str, Any] = {
     # (DNS-rebinding / redirect TOCTOU).
     "follow_redirects": False,
     "headers": {
-        "User-Agent": "seco-labor-mcp/0.1.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
+        "User-Agent": "seco-labor-mcp/0.2.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
         "Accept": "application/json, text/csv, */*",
     },
 }
@@ -95,15 +97,6 @@ CKAN_BASE = "https://opendata.swiss/api/3/action"
 SECO_ORG = "staatssekretariat-fur-wirtschaft-seco"
 AMSTAT_BASE = "https://www.amstat.ch"
 ARBEIT_SWISS_BASE = "https://www.arbeit.swiss"
-
-# Known stable SECO dataset slugs on opendata.swiss
-# These are the most relevant datasets for our use cases
-KNOWN_DATASETS = {
-    "unemployment_monthly": "monatliche-arbeitslosenzahlen",  # adjust to actual slug
-    "job_seekers": "stellensuchende",
-    "open_positions": "offene-stellen",
-    "short_time_work": "kurzarbeit",
-}
 
 # Swiss canton codes mapping
 CANTON_CODES = {
@@ -282,19 +275,25 @@ class UrlNotAllowedError(ValueError):
     """Raised by _validate_external_url for unsafe schemes or IP targets."""
 
 
-def _validate_external_url(url: str) -> None:
+async def _validate_external_url(url: str) -> None:
     """SEC-004: Reject URLs that are not HTTPS or that resolve to a
     private/loopback/link-local/multicast IP. Resolution happens here
     (and not inside httpx), so combined with follow_redirects=False
-    this also prevents DNS-rebinding TOCTOU attacks."""
+    this also prevents DNS-rebinding TOCTOU attacks.
+
+    Async so DNS resolution runs on the event loop's executor and does
+    not block other concurrent tool calls under SSE deployment."""
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise UrlNotAllowedError(f"only https:// is allowed, got: {parsed.scheme!r}")
     host = parsed.hostname
     if not host:
         raise UrlNotAllowedError(f"missing hostname in URL: {url!r}")
+    loop = asyncio.get_running_loop()
     try:
-        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+        infos = await loop.getaddrinfo(
+            host, parsed.port or 443, proto=socket.IPPROTO_TCP
+        )
     except socket.gaierror as exc:
         raise UrlNotAllowedError(f"DNS resolution failed for {host!r}: {exc}") from exc
     for _family, _type, _proto, _canon, sockaddr in infos:
@@ -372,22 +371,33 @@ def _pct(v: Any) -> str:
 # ---------------------------------------------------------------------------
 
 _CSV_TTL = timedelta(hours=24)
-# url -> (fetched_at, text)
-_CSV_CACHE: dict[str, tuple[datetime, str]] = {}
+# Cap the cache so a misbehaving caller iterating distinct URLs cannot grow it
+# without bound between TTL expiries. OrderedDict keeps FIFO insertion order so
+# we can pop the oldest entry on overflow.
+_CSV_CACHE_MAX = 50
+_CSV_CACHE: OrderedDict[str, tuple[datetime, str]] = OrderedDict()
 
 _PERIOD_RE = re.compile(r"\b(20\d{2})[-/.\s](0?[1-9]|1[0-2])\b")
 
 
+def _cache_put(url: str, text: str) -> None:
+    """Insert into _CSV_CACHE with bounded size (FIFO eviction)."""
+    _CSV_CACHE[url] = (datetime.now(), text)
+    while len(_CSV_CACHE) > _CSV_CACHE_MAX:
+        _CSV_CACHE.popitem(last=False)
+
+
 async def _fetch_text_cached(url: str) -> str | None:
-    """Fetch text with a 24 h TTL cache. Tries UTF-8 then Windows-1252
-    (common for Swiss admin CSV exports). Returns None on any failure
-    (including SSRF policy rejection and unexpected redirects)."""
+    """Fetch text with a 24 h TTL cache (bounded to _CSV_CACHE_MAX entries).
+    Tries UTF-8 then Windows-1252 (common for Swiss admin CSV exports).
+    Returns None on any failure (including SSRF policy rejection and
+    unexpected redirects)."""
     now = datetime.now()
     cached = _CSV_CACHE.get(url)
     if cached and now - cached[0] < _CSV_TTL:
         return cached[1]
     try:
-        _validate_external_url(url)
+        await _validate_external_url(url)
         async with _client_scope() as client:
             resp = await client.get(url)
             resp.raise_for_status()
@@ -395,7 +405,7 @@ async def _fetch_text_cached(url: str) -> str | None:
                 text = resp.content.decode("utf-8")
             except UnicodeDecodeError:
                 text = resp.content.decode("cp1252", errors="replace")
-            _CSV_CACHE[url] = (now, text)
+            _cache_put(url, text)
             return text
     except Exception:
         return None
@@ -1454,7 +1464,7 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
     # — defense-in-depth against future code changes that introduce variable hosts).
     available = False
     try:
-        _validate_external_url(url_pattern)
+        await _validate_external_url(url_pattern)
         async with _client_scope() as client:
             resp = await client.head(url_pattern, timeout=10.0)
             available = resp.status_code == 200

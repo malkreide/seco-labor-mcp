@@ -877,36 +877,44 @@ class TestJobSeekersLiveCsv:
 
 
 class TestSsrfValidator:
-    """Tests for _validate_external_url (SEC-004)."""
+    """Tests for _validate_external_url (SEC-004). All async because the
+    validator does DNS resolution on the event loop's executor."""
 
-    def test_https_public_host_is_allowed(self):
+    @pytest.mark.asyncio
+    async def test_https_public_host_is_allowed(self):
         # No exception means the URL passed validation.
-        _validate_external_url("https://opendata.swiss/api/3/action/package_search")
+        await _validate_external_url("https://opendata.swiss/api/3/action/package_search")
 
-    def test_http_scheme_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_http_scheme_is_rejected(self):
         with pytest.raises(UrlNotAllowedError, match="https"):
-            _validate_external_url("http://opendata.swiss/foo")
+            await _validate_external_url("http://opendata.swiss/foo")
 
-    def test_file_scheme_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_file_scheme_is_rejected(self):
         with pytest.raises(UrlNotAllowedError):
-            _validate_external_url("file:///etc/passwd")
+            await _validate_external_url("file:///etc/passwd")
 
-    def test_missing_host_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_missing_host_is_rejected(self):
         with pytest.raises(UrlNotAllowedError):
-            _validate_external_url("https:///just-a-path")
+            await _validate_external_url("https:///just-a-path")
 
-    def test_loopback_literal_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_loopback_literal_is_rejected(self):
         with pytest.raises(UrlNotAllowedError, match="non-public"):
-            _validate_external_url("https://127.0.0.1/foo")
+            await _validate_external_url("https://127.0.0.1/foo")
 
-    def test_private_rfc1918_literal_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_private_rfc1918_literal_is_rejected(self):
         with pytest.raises(UrlNotAllowedError, match="non-public"):
-            _validate_external_url("https://10.0.0.1/admin")
+            await _validate_external_url("https://10.0.0.1/admin")
 
-    def test_link_local_metadata_endpoint_is_rejected(self):
+    @pytest.mark.asyncio
+    async def test_link_local_metadata_endpoint_is_rejected(self):
         # AWS/GCP/Azure metadata service shared address.
         with pytest.raises(UrlNotAllowedError, match="non-public"):
-            _validate_external_url("https://169.254.169.254/latest/meta-data/")
+            await _validate_external_url("https://169.254.169.254/latest/meta-data/")
 
     @pytest.mark.asyncio
     async def test_csv_fetch_skips_internal_url(self):
@@ -914,3 +922,17 @@ class TestSsrfValidator:
         without ever opening a socket to it."""
         result = await _server_mod._fetch_text_cached("http://169.254.169.254/csv")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cache_evicts_oldest_when_full(self):
+        """_cache_put must drop the oldest entry once _CSV_CACHE_MAX is exceeded."""
+        _server_mod._CSV_CACHE.clear()
+        for i in range(_server_mod._CSV_CACHE_MAX + 5):
+            _server_mod._cache_put(f"https://example.test/csv/{i}", f"row{i}")
+        assert len(_server_mod._CSV_CACHE) == _server_mod._CSV_CACHE_MAX
+        # First 5 inserts must have been evicted; the most recent must be present.
+        assert "https://example.test/csv/0" not in _server_mod._CSV_CACHE
+        assert (
+            f"https://example.test/csv/{_server_mod._CSV_CACHE_MAX + 4}"
+            in _server_mod._CSV_CACHE
+        )
