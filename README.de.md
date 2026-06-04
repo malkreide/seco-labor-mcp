@@ -1,10 +1,17 @@
-# seco-labor-mcp
+> 🇨🇭 **Teil des [Swiss Public Data MCP Portfolios](https://github.com/malkreide)**
 
-> **Swiss Public Data MCP Portfolio** · [malkreide](https://github.com/malkreide)
+# 💼 SECO Labor Market MCP Server
+
+[![CI](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/seco-labor-mcp)](https://pypi.org/project/seco-labor-mcp/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-purple)](https://modelcontextprotocol.io/)
+[![No Auth Required](https://img.shields.io/badge/auth-none%20required-brightgreen)](https://github.com/malkreide/seco-labor-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+🌐 **[English](README.md)** | **Deutsch**
 
 Ein MCP-Server (Model Context Protocol) für Schweizer Arbeitsmarktdaten des **SECO** (Staatssekretariat für Wirtschaft) und **AMSTAT** via opendata.swiss.
-
-[🇬🇧 English Version](README.md)
 
 <p align="center">
   <img src="assets/demo.png" alt="Demo: Claude fragt Jugendarbeitslosigkeit über seco-labor-mcp Tool Call ab" width="720">
@@ -126,3 +133,23 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 
 SECO-Daten auf opendata.swiss stehen unter **Creative Commons CCZero**.  
 Quelle: Staatssekretariat für Wirtschaft (SECO) — [seco.admin.ch](https://www.seco.admin.ch)
+
+---
+
+## Mitwirken
+
+Entwicklungsrichtlinien finden Sie in [CONTRIBUTING.md](CONTRIBUTING.md)
+([deutsche Version](CONTRIBUTING.de.md)).
+
+---
+
+## Sicherheit
+
+Den Sicherheitsstatus und die Anleitung zum Melden von Schwachstellen finden Sie
+in [SECURITY.md](SECURITY.md) ([deutsche Version](SECURITY.de.md)).
+
+---
+
+## Lizenz
+
+Veröffentlicht unter der [MIT-Lizenz](LICENSE) — Copyright © 2026 Hayal Oezkan.
