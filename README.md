@@ -1,15 +1,17 @@
-# seco-labor-mcp
+> 🇨🇭 **Part of the [Swiss Public Data MCP Portfolio](https://github.com/malkreide)**
 
-> **Swiss Public Data MCP Portfolio** · [malkreide](https://github.com/malkreide)
+# 💼 SECO Labor Market MCP Server
 
 [![CI](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/seco-labor-mcp)](https://pypi.org/project/seco-labor-mcp/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-purple)](https://modelcontextprotocol.io/)
+[![No Auth Required](https://img.shields.io/badge/auth-none%20required-brightgreen)](https://github.com/malkreide/seco-labor-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An MCP (Model Context Protocol) server for Swiss labor market data from **SECO** (Staatssekretariat für Wirtschaft) and **AMSTAT** via opendata.swiss.
+🌐 **English** | **[Deutsch](README.de.md)**
 
-[🇩🇪 Deutsche Version](README.de.md)
+An MCP (Model Context Protocol) server for Swiss labor market data from **SECO** (Staatssekretariat für Wirtschaft) and **AMSTAT** via opendata.swiss.
 
 <p align="center">
   <img src="assets/demo.png" alt="Demo: Claude queries youth unemployment via seco-labor-mcp tool call" width="720">
@@ -235,3 +237,16 @@ Source: Staatssekretariat für Wirtschaft (SECO) — [seco.admin.ch](https://www
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+---
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security posture and how to report a
+vulnerability.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE) — Copyright © 2026 Hayal Oezkan.

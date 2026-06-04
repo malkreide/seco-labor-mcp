@@ -1,5 +1,7 @@
 # Contributing to seco-labor-mcp
 
+🌐 **English** | **[Deutsch](CONTRIBUTING.de.md)**
+
 Thank you for your interest in contributing to the Swiss Public Data MCP Portfolio!
 
 ## Development Setup
@@ -33,8 +35,8 @@ pytest tests/ --run-live -v
 1. Define a Pydantic input model with `ConfigDict(extra='forbid')`
 2. Use `@mcp.tool(name="seco_*", annotations={...})` decorator
 3. Include docstring with Args, Returns, and Schema sections
-4. Add tests in `tests/test_server.py`
-5. Update README tool table
+4. Add tests in `tests/test_unit.py`
+5. Update the tool table in `README.md` and `README.de.md`
 
 ## No-Auth-First Principle
 
