@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name        = "seco-labor-mcp"
-version     = "0.3.2"
+version     = "0.3.3"
 description = "MCP server for Swiss labor market data (SECO/AMSTAT) – Arbeitsmarkt & Stellensuche"
 readme      = "README.md"
 license     = { text = "MIT" }
