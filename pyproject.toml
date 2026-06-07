@@ -43,7 +43,6 @@ dev = [
 seco-labor-mcp = "seco_labor_mcp.server:main"
 
 [project.urls]
-"mcp-name" = "io.github.malkreide/seco-labor-mcp"
 Homepage   = "https://github.com/malkreide/seco-labor-mcp"
 Repository = "https://github.com/malkreide/seco-labor-mcp"
 Issues     = "https://github.com/malkreide/seco-labor-mcp/issues"

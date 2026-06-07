@@ -250,3 +250,5 @@ vulnerability.
 ## License
 
 Released under the [MIT License](LICENSE) — Copyright © 2026 Hayal Oezkan.
+
+<!-- mcp-name: io.github.malkreide/seco-labor-mcp -->
