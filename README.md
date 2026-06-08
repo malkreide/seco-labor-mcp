@@ -252,3 +252,22 @@ vulnerability.
 Released under the [MIT License](LICENSE) — Copyright © 2026 Hayal Oezkan.
 
 <!-- mcp-name: io.github.malkreide/seco-labor-mcp -->
+
+<!-- BEGIN GENERATED: install -->
+## Installation
+
+Run via [`uv`](https://docs.astral.sh/uv/)'s `uvx` — no clone or manual install needed. Add to your MCP client config (`mcpServers` for Claude Desktop, Cursor and Windsurf; use a top-level `servers` key for VS Code in `.vscode/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "seco-labor-mcp": {
+      "command": "uvx",
+      "args": [
+        "seco-labor-mcp"
+      ]
+    }
+  }
+}
+```
+<!-- END GENERATED: install -->
