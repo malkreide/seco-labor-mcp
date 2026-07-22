@@ -430,7 +430,11 @@ class TestUnemploymentOverview:
         assert "Genève" in result or "GE" in result
 
     @pytest.mark.asyncio
+    @respx.mock
     async def test_overview_invalid_canton(self):
+        respx.get(f"{CKAN_BASE}/package_search").mock(
+            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
+        )
         inp = UnemploymentInput(canton="XX")
         result = await seco_get_unemployment_overview(inp)
 
