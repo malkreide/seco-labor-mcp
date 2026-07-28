@@ -153,3 +153,9 @@ in [SECURITY.md](SECURITY.md) ([deutsche Version](SECURITY.de.md)).
 ## Lizenz
 
 Veröffentlicht unter der [MIT-Lizenz](LICENSE) — Copyright © 2026 Hayal Oezkan.
+
+---
+
+## Autor
+
+**Hayal Oezkan** · [github.com/malkreide](https://github.com/malkreide)
