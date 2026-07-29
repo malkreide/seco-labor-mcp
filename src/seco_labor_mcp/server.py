@@ -37,6 +37,8 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import __version__
+
 # ---------------------------------------------------------------------------
 # HTTP client lifecycle (SDK-001: pooled client via FastMCP lifespan)
 # ---------------------------------------------------------------------------
@@ -50,7 +52,7 @@ _HTTP_KWARGS: dict[str, Any] = {
     # (DNS-rebinding / redirect TOCTOU).
     "follow_redirects": False,
     "headers": {
-        "User-Agent": "seco-labor-mcp/0.3.0 (Swiss Public Data MCP Portfolio; github.com/malkreide)",
+        "User-Agent": f"seco-labor-mcp/{__version__} (Swiss Public Data MCP Portfolio; github.com/malkreide)",
         "Accept": "application/json, text/csv, */*",
     },
 }
