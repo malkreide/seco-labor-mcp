@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Versions-Badge in beiden READMEs** (`0.3.4`). Bis jetzt war die Version im
+  README nur über den dynamischen PyPI-Badge sichtbar, und `C8` meldete auf
+  INFO-Ebene, dass es keinen Anker zum Abgleichen gibt — «nichts gefunden» soll
+  nicht wie «alles in Ordnung» aussehen.
+
+  Ein hartkodierter Badge ist nur dann eine Verbesserung, wenn ihn etwas bewacht
+  — sonst führt er genau die Drift ein, gegen die der Check existiert. Hier
+  bewacht ihn `scripts/check_version_sync.py`, das bereits in der CI läuft: es
+  nimmt den Badge jetzt in beiden Sprachfassungen mit auf. Gegengeprüft, dass
+  die Bewachung auch greift — mit einem auf `0.9.9` verstellten Badge meldet der
+  Check `DRIFT` und beendet sich mit Exit 1.
+
 ### Fixed
 
 - **`ruff` mit Obergrenze gepinnt (`>=0.5.0,<0.17`).** ruff ist pre-1.0; seine
