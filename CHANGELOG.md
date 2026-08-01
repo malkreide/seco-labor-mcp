@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ruff` mit Obergrenze gepinnt (`>=0.5.0,<0.17`).** ruff ist pre-1.0; seine
+  Minors sind die Stelle, an der Regelverhalten und neue Checks innerhalb der
+  gewählten Familien landen. Ohne Cap installiert die CI die jeweils neuste
+  Version und wird ohne Codeänderung rot.
+
+  Der Cap liegt bewusst über dem tatsächlich verwendeten Stand (`0.16.x`). Ein
+  `<0.16` hätte die Schranke zwar gesetzt, dabei aber still auf `0.15`
+  zurückgedreht — eine Obergrenze soll den Stand einfrieren, nicht nebenbei ein
+  Downgrade auslösen.
+
+- **Emoji aus vier Überschriften entfernt** — `# 💼 SECO Labor Market MCP Server`
+  in beiden Sprachfassungen sowie `## 🛡️ Safety & Limits` /
+  `## 🛡️ Sicherheit & Grenzen`. Vorher nach Regel E4 geprüft: beide Dateien
+  enthalten null `](#…)`-Anker, es bricht also kein Link. Emoji im Fliesstext
+  bleiben unangetastet.
+
 - **Zehn blinde `pytest.raises(Exception)` in `tests/test_unit.py` ersetzt.**
   Alle zehn prüfen Pydantic-Schranken, und alle zehn bestanden auch dann, wenn
   gar nicht mehr die Schranke griff: ein vertippter Feldname scheitert ebenfalls,
