@@ -10,6 +10,7 @@ import json
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
 from seco_labor_mcp import server as _server_mod
 from seco_labor_mcp.server import (
@@ -39,6 +40,31 @@ from seco_labor_mcp.server import (
     seco_list_cantons,
     seco_search_datasets,
 )
+
+
+def assert_rejects(build, error_type: str, field: str) -> None:
+    """Die Konstruktion muss an DIESEM Feld und aus DIESEM Grund scheitern.
+
+    `pytest.raises(ValidationError)` allein reicht hier nicht: ein Tippfehler im
+    Feldnamen scheitert ebenfalls, nur als `extra_forbidden` — der Test bliebe
+    gruen, ohne die Schranke noch zu pruefen.
+
+    Der Feldname allein reicht auch nicht. Die Bounds-Paare unten pruefen je
+    beide Enden derselben Schranke (`limit=25` / `limit=0`); auf den Feldnamen
+    gepruefte Assertions waeren fuer beide Haelften identisch und wuerden ein
+    vertauschtes `ge`/`le` nicht bemerken. Deshalb der Fehlertyp:
+    `less_than_equal` vs. `greater_than_equal`.
+
+    Verglichen wird auf der strukturierten Fehlerliste statt per `match=` auf
+    dem Meldungstext — der ist bei Pydantic-Upgrades und in lokalisierten
+    Validatoren beweglich, `type` und `loc` sind es nicht.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        build()
+    assert [(e["type"], e["loc"]) for e in excinfo.value.errors()] == [
+        (error_type, (field,))
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -140,14 +166,14 @@ class TestInputValidation:
         assert inp.query == "arbeitslose"
 
     def test_dataset_search_query_too_short(self):
-        with pytest.raises(Exception):
-            DatasetSearchInput(query="a")
+        assert_rejects(lambda: DatasetSearchInput(query="a"),
+                       "string_too_short", "query")
 
     def test_dataset_search_limit_bounds(self):
-        with pytest.raises(Exception):
-            DatasetSearchInput(query="test", limit=25)  # max is 20
-        with pytest.raises(Exception):
-            DatasetSearchInput(query="test", limit=0)  # min is 1
+        assert_rejects(lambda: DatasetSearchInput(query="test", limit=25),  # max is 20
+                       "less_than_equal", "limit")
+        assert_rejects(lambda: DatasetSearchInput(query="test", limit=0),  # min is 1
+                       "greater_than_equal", "limit")
 
     def test_unemployment_valid_canton(self):
         inp = UnemploymentInput(canton="ZH")
@@ -158,10 +184,10 @@ class TestInputValidation:
         assert inp.canton is None
 
     def test_unemployment_year_bounds(self):
-        with pytest.raises(Exception):
-            UnemploymentInput(year=1999)  # too early
-        with pytest.raises(Exception):
-            UnemploymentInput(year=2031)  # too late
+        assert_rejects(lambda: UnemploymentInput(year=1999),  # too early
+                       "greater_than_equal", "year")
+        assert_rejects(lambda: UnemploymentInput(year=2031),  # too late
+                       "less_than_equal", "year")
 
     def test_monthly_report_valid(self):
         inp = MonthlyReportInput(year=2025, month=12, language="de")
@@ -170,14 +196,18 @@ class TestInputValidation:
         assert inp.language == "de"
 
     def test_monthly_report_invalid_language(self):
-        with pytest.raises(Exception):
-            MonthlyReportInput(year=2025, month=6, language="en")  # only de/fr/it
+        assert_rejects(
+            lambda: MonthlyReportInput(year=2025, month=6, language="en"),  # only de/fr/it
+            "string_pattern_mismatch", "language")
 
     def test_monthly_report_month_bounds(self):
-        with pytest.raises(Exception):
-            MonthlyReportInput(year=2025, month=13)
-        with pytest.raises(Exception):
-            MonthlyReportInput(year=2025, month=0)
+        # `year` traegt hier ebenfalls Bounds. Ein auf den Fehlertyp allein
+        # gepruefter Test bliebe gruen, wenn `month=` versehentlich zu `year=`
+        # wuerde — deshalb steht das Feld mit in der Erwartung.
+        assert_rejects(lambda: MonthlyReportInput(year=2025, month=13),
+                       "less_than_equal", "month")
+        assert_rejects(lambda: MonthlyReportInput(year=2025, month=0),
+                       "greater_than_equal", "month")
 
     def test_canton_codes_completeness(self):
         """All 26 Swiss cantons must be present."""
@@ -195,12 +225,14 @@ class TestInputValidation:
         assert inp.response_format == ResponseFormat.MARKDOWN
 
     def test_occupation_input_rejects_unknown_format(self):
-        with pytest.raises(Exception):
-            OccupationInput(response_format="csv")  # type: ignore[arg-type]
+        assert_rejects(lambda: OccupationInput(response_format="csv"),  # type: ignore[arg-type]
+                       "enum", "response_format")
 
     def test_occupation_input_rejects_extra_fields(self):
-        with pytest.raises(Exception):
-            OccupationInput(canton="ZH")  # type: ignore[call-arg]
+        # Hier ist `extra_forbidden` der Zweck des Tests, nicht die Fehlerquelle,
+        # die es zu vermeiden gilt — entsprechend explizit erwartet.
+        assert_rejects(lambda: OccupationInput(canton="ZH"),  # type: ignore[call-arg]
+                       "extra_forbidden", "canton")
 
 
 class TestOccupationTool:

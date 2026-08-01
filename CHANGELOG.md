@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Zehn blinde `pytest.raises(Exception)` in `tests/test_unit.py` ersetzt.**
+  Alle zehn prüfen Pydantic-Schranken, und alle zehn bestanden auch dann, wenn
+  gar nicht mehr die Schranke griff: ein vertippter Feldname scheitert ebenfalls,
+  nur als `extra_forbidden`.
+
+  Der Feldname allein hätte nicht gereicht. Fünf der Tests prüfen **beide Enden
+  derselben Schranke** (`limit=25`/`limit=0`, `year=1999`/`year=2031`,
+  `month=13`/`month=0`) — eine auf den Feldnamen gestützte Assertion wäre für
+  beide Hälften identisch und hätte ein vertauschtes `ge`/`le` nicht bemerkt.
+  Umgekehrt trägt `MonthlyReportInput` Bounds auf `year` *und* `month`, sodass
+  der Fehlertyp allein eine Feldverwechslung durchgelassen hätte.
+
+  Der neue Helper `assert_rejects(build, error_type, field)` prüft deshalb beides
+  gegen die strukturierte Fehlerliste — `type` und `loc` statt `match=` auf dem
+  Meldungstext, der bei Pydantic-Upgrades beweglich ist.
+
+  Per Mutationstest gegengeprüft; unter jeder Mutation bestand die alte
+  Assertion und fällt die neue durch:
+
+  | Mutation | alt | neu |
+  |---|---|---|
+  | obere Schranke prüft unteren Wert | bestanden | fällt durch |
+  | `month`-Bounds-Test trifft `year` | bestanden | fällt durch |
+  | Feldname `response_formt` vertippt | bestanden | fällt durch |
+  | Feldname `quer` vertippt | bestanden | fällt durch |
+
 ## [0.3.4] - 2026-07-30
 
 ### Fixed
