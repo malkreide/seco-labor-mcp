@@ -1,6 +1,6 @@
 > 🇨🇭 **Teil des [Swiss Public Data MCP Portfolios](https://github.com/malkreide)**
 
-# 💼 SECO Labor Market MCP Server
+# SECO Labor Market MCP Server
 
 [![CI](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/seco-labor-mcp)](https://pypi.org/project/seco-labor-mcp/)
@@ -115,7 +115,7 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 
 ---
 
-## 🛡️ Sicherheit & Grenzen
+## Sicherheit & Grenzen
 
 | Aspekt | Details |
 |--------|---------|

@@ -1,6 +1,6 @@
 > 🇨🇭 **Part of the [Swiss Public Data MCP Portfolio](https://github.com/malkreide)**
 
-# 💼 SECO Labor Market MCP Server
+# SECO Labor Market MCP Server
 
 [![CI](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/malkreide/seco-labor-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/seco-labor-mcp)](https://pypi.org/project/seco-labor-mcp/)
@@ -220,7 +220,7 @@ Source: Staatssekretariat für Wirtschaft (SECO) — [seco.admin.ch](https://www
 
 ---
 
-## 🛡️ Safety & Limits
+## Safety & Limits
 
 | Aspect | Details |
 |--------|---------|

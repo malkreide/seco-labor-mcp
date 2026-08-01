@@ -36,7 +36,15 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "respx>=0.21.0",
-    "ruff>=0.5.0",
+    # Obergrenze: ruff ist pre-1.0, seine Minors sind die Stelle, an der
+    # Regelverhalten und neue Checks innerhalb der gewaehlten Familien landen.
+    # Ohne Cap wird die CI ohne Codeaenderung rot.
+    #
+    # Der Cap liegt ueber dem tatsaechlich verwendeten Stand (0.16.x) — ein
+    # `<0.16` haette die Obergrenze zwar gesetzt, dabei aber still auf 0.15
+    # zurueckgedreht. Eine Schranke soll den Stand einfrieren, nicht nebenbei
+    # ein Downgrade ausloesen.
+    "ruff>=0.5.0,<0.17",
 ]
 
 [project.scripts]
