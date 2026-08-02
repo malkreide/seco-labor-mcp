@@ -102,13 +102,32 @@ ARBEIT_SWISS_BASE = "https://www.arbeit.swiss"
 
 # Swiss canton codes mapping
 CANTON_CODES = {
-    "ZH": "Zürich", "BE": "Bern", "LU": "Luzern", "UR": "Uri",
-    "SZ": "Schwyz", "OW": "Obwalden", "NW": "Nidwalden", "GL": "Glarus",
-    "ZG": "Zug", "FR": "Freiburg", "SO": "Solothurn", "BS": "Basel-Stadt",
-    "BL": "Basel-Landschaft", "SH": "Schaffhausen", "AR": "Appenzell Ausserrhoden",
-    "AI": "Appenzell Innerrhoden", "SG": "St. Gallen", "GR": "Graubünden",
-    "AG": "Aargau", "TG": "Thurgau", "TI": "Ticino", "VD": "Vaud",
-    "VS": "Valais", "NE": "Neuchâtel", "GE": "Genève", "JU": "Jura",
+    "ZH": "Zürich",
+    "BE": "Bern",
+    "LU": "Luzern",
+    "UR": "Uri",
+    "SZ": "Schwyz",
+    "OW": "Obwalden",
+    "NW": "Nidwalden",
+    "GL": "Glarus",
+    "ZG": "Zug",
+    "FR": "Freiburg",
+    "SO": "Solothurn",
+    "BS": "Basel-Stadt",
+    "BL": "Basel-Landschaft",
+    "SH": "Schaffhausen",
+    "AR": "Appenzell Ausserrhoden",
+    "AI": "Appenzell Innerrhoden",
+    "SG": "St. Gallen",
+    "GR": "Graubünden",
+    "AG": "Aargau",
+    "TG": "Thurgau",
+    "TI": "Ticino",
+    "VD": "Vaud",
+    "VS": "Valais",
+    "NE": "Neuchâtel",
+    "GE": "Genève",
+    "JU": "Jura",
 }
 
 # ---------------------------------------------------------------------------
@@ -118,12 +137,14 @@ CANTON_CODES = {
 
 class ResponseFormat(StrEnum):
     """Output format for tool responses."""
+
     MARKDOWN = "markdown"
     JSON = "json"
 
 
 class DatasetSearchInput(BaseModel):
     """Input for SECO dataset search on opendata.swiss."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     query: str = Field(
@@ -150,6 +171,7 @@ class DatasetSearchInput(BaseModel):
 
 class UnemploymentInput(BaseModel):
     """Input for unemployment statistics queries."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     canton: str | None = Field(
@@ -175,14 +197,12 @@ class UnemploymentInput(BaseModel):
 
 class YouthUnemploymentInput(BaseModel):
     """Input for youth unemployment queries (15–24 year olds)."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     canton: str | None = Field(
         default=None,
-        description=(
-            "Filter by canton code (2-letter, e.g. 'ZH'). "
-            "Leave empty for national data."
-        ),
+        description=("Filter by canton code (2-letter, e.g. 'ZH'). Leave empty for national data."),
         max_length=2,
     )
     response_format: ResponseFormat = Field(
@@ -193,6 +213,7 @@ class YouthUnemploymentInput(BaseModel):
 
 class JobSeekersInput(BaseModel):
     """Input for job seeker (Stellensuchende) queries."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     canton: str | None = Field(
@@ -208,6 +229,7 @@ class JobSeekersInput(BaseModel):
 
 class OpenPositionsInput(BaseModel):
     """Input for open positions (Offene Stellen) queries."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     response_format: ResponseFormat = Field(
@@ -218,6 +240,7 @@ class OpenPositionsInput(BaseModel):
 
 class OccupationInput(BaseModel):
     """Input for unemployment-by-occupation (Berufshauptgruppe) queries."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     response_format: ResponseFormat = Field(
@@ -228,6 +251,7 @@ class OccupationInput(BaseModel):
 
 class MonthlyReportInput(BaseModel):
     """Input for monthly press report URL lookup."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     year: int = Field(
@@ -251,13 +275,13 @@ class MonthlyReportInput(BaseModel):
 
 class DatasetDetailsInput(BaseModel):
     """Input for fetching a specific SECO dataset."""
+
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
 
     dataset_id: str = Field(
         ...,
         description=(
-            "Dataset ID or slug from opendata.swiss. "
-            "Obtain from seco_search_datasets first."
+            "Dataset ID or slug from opendata.swiss. Obtain from seco_search_datasets first."
         ),
         min_length=3,
         max_length=200,
@@ -293,9 +317,7 @@ async def _validate_external_url(url: str) -> None:
         raise UrlNotAllowedError(f"missing hostname in URL: {url!r}")
     loop = asyncio.get_running_loop()
     try:
-        infos = await loop.getaddrinfo(
-            host, parsed.port or 443, proto=socket.IPPROTO_TCP
-        )
+        infos = await loop.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
         raise UrlNotAllowedError(f"DNS resolution failed for {host!r}: {exc}") from exc
     for _family, _type, _proto, _canon, sockaddr in infos:
@@ -308,9 +330,7 @@ async def _validate_external_url(url: str) -> None:
             or ip.is_reserved
             or ip.is_unspecified
         ):
-            raise UrlNotAllowedError(
-                f"refusing to fetch URL pointing at non-public address: {ip}"
-            )
+            raise UrlNotAllowedError(f"refusing to fetch URL pointing at non-public address: {ip}")
 
 
 @asynccontextmanager
@@ -590,9 +610,7 @@ async def _try_live_csv(
                 "headers": parsed["headers"],
                 "total_rows": len(parsed["rows"]),
                 "detected_period": _detect_latest_period(parsed),
-                "sample_rows": _select_rows_for_canton(
-                    parsed, canton_filter, limit=sample_limit
-                ),
+                "sample_rows": _select_rows_for_canton(parsed, canton_filter, limit=sample_limit),
                 "delimiter": parsed["delimiter"],
             }
     return None
@@ -622,9 +640,7 @@ def _render_live_csv_markdown(live: dict[str, Any], canton_filter: str | None) -
             lines.append("| " + " | ".join(str(c) for c in padded) + " |")
         lines.append("")
     else:
-        lines.append(
-            f"*Keine Zeilen mit Kanton-Code `{canton_filter}` in dieser CSV gefunden.*\n"
-        )
+        lines.append(f"*Keine Zeilen mit Kanton-Code `{canton_filter}` in dieser CSV gefunden.*\n")
     return lines
 
 
@@ -682,20 +698,22 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
     if params.response_format == ResponseFormat.JSON:
         simplified = []
         for ds in datasets:
-            simplified.append({
-                "id": ds.get("name", ds.get("id", "")),
-                "title_de": _extract_title(ds.get("title", "")),
-                "metadata_modified": ds.get("metadata_modified", "")[:10],
-                "resource_count": len(ds.get("resources", [])),
-                "resources": [
-                    {
-                        "format": r.get("format", ""),
-                        "name": _extract_title(r.get("name", "")),
-                        "url": r.get("url", ""),
-                    }
-                    for r in ds.get("resources", [])[:5]
-                ],
-            })
+            simplified.append(
+                {
+                    "id": ds.get("name", ds.get("id", "")),
+                    "title_de": _extract_title(ds.get("title", "")),
+                    "metadata_modified": ds.get("metadata_modified", "")[:10],
+                    "resource_count": len(ds.get("resources", [])),
+                    "resources": [
+                        {
+                            "format": r.get("format", ""),
+                            "name": _extract_title(r.get("name", "")),
+                            "url": r.get("url", ""),
+                        }
+                        for r in ds.get("resources", [])[:5]
+                    ],
+                }
+            )
         return json.dumps(simplified, ensure_ascii=False, indent=2)
 
     return _format_datasets_markdown(datasets)
@@ -939,20 +957,22 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
     if live:
         lines.extend(_render_live_csv_markdown(live, canton_filter))
     else:
-        lines.extend([
-            "> ⚠️ **Hinweis zur Datenherkunft**: Live-CSV-Abruf fehlgeschlagen. "
-            "Die folgenden Zahlen sind ein **statischer Referenz-Snapshot** vom Dezember 2025 "
-            "(SECO-Pressemitteilung 2026-01-09). Für aktuelle Werte siehe den Link am Ende.\n",
-            "### Referenz-Snapshot (Dezember 2025, statisch)\n",
-            "| Kennzahl | Wert |",
-            "|----------|------|",
-            "| Arbeitslose (total) | 147'275 |",
-            "| Arbeitslosenquote | 3.2% |",
-            "| Saisonbereinigte Quote | 3.0% |",
-            "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
-            "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
-            "| Jahresdurchschnitt 2025 | 2.8% |",
-        ])
+        lines.extend(
+            [
+                "> ⚠️ **Hinweis zur Datenherkunft**: Live-CSV-Abruf fehlgeschlagen. "
+                "Die folgenden Zahlen sind ein **statischer Referenz-Snapshot** vom Dezember 2025 "
+                "(SECO-Pressemitteilung 2026-01-09). Für aktuelle Werte siehe den Link am Ende.\n",
+                "### Referenz-Snapshot (Dezember 2025, statisch)\n",
+                "| Kennzahl | Wert |",
+                "|----------|------|",
+                "| Arbeitslose (total) | 147'275 |",
+                "| Arbeitslosenquote | 3.2% |",
+                "| Saisonbereinigte Quote | 3.0% |",
+                "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
+                "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
+                "| Jahresdurchschnitt 2025 | 2.8% |",
+            ]
+        )
 
     if datasets:
         lines.append("\n### Gefundene Datensätze für Detail-Downloads\n")
@@ -971,8 +991,11 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
         lines.append("| Kanton | Quote |")
         lines.append("|--------|-------|")
         cantonal_data = [
-            ("JU", "Jura", 4.8), ("GE", "Genève", 4.5), ("NE", "Neuchâtel", 4.2),
-            ("VD", "Vaud", 3.8), ("TI", "Ticino", 3.5),
+            ("JU", "Jura", 4.8),
+            ("GE", "Genève", 4.5),
+            ("NE", "Neuchâtel", 4.2),
+            ("VD", "Vaud", 3.8),
+            ("TI", "Ticino", 3.5),
         ]
         for code, name, rate in cantonal_data:
             marker = " ◀" if canton_filter == code else ""
@@ -1094,8 +1117,7 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
                     ),
                     "verify_live_at": "https://www.amstat.ch/v2/amstat_de.html",
                     "example_youth_15_24": (
-                        "August 2025 (Snapshot): +2'186 Jugendarbeitslose "
-                        "vs. Vormonat (+18.6%)."
+                        "August 2025 (Snapshot): +2'186 Jugendarbeitslose vs. Vormonat (+18.6%)."
                     ),
                 },
                 "seasonal_pattern": (
@@ -1143,23 +1165,25 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
             "ein **statischer Referenz-Snapshot** (Dezember 2025) – nicht live abgefragt. "
             "Für aktuelle Werte siehe Datenquellen am Ende.\n"
         )
-    lines.extend([
-        "### Saisonales Muster (allgemein gültig)\n",
-        "Die SECO-Monatsdaten weisen jeweils die Zahl der Jugendarbeitslosen (15–24 Jährige) aus.",
-        "Diese Gruppe ist für das Schulamt besonders relevant:\n",
-        "**Saisonales Muster:**",
-        "- **Juli/August**: starker Anstieg (Schulabgänger ohne Anschlusslösung)",
-        "  - Beispielwert (Snapshot Aug 2025): +2'186 Jugendarbeitslose (+18.6% vs. Vormonat)",
-        "- **September–November**: deutlicher Rückgang (Lehrstellenantritt, neue Ausbildungen)",
-        "- Dies ist ein natürlicher Rhythmus – aber die Residualgrösse signalisiert Handlungsbedarf\n",
-        "### Interpretation für die Bildungsplanung\n",
-        "| Indikator | Bedeutung für Schulamt |",
-        "|-----------|------------------------|",
-        "| Hohe Aug-Quote in Berufsgruppe X | → Mehr Unterstützung in Brückenangeboten |",
-        "| Steigende Jahresquote 15-24 | → Stärken der Berufswahlvorbereitung |",
-        "| Kanton ZH über Schweizer Schnitt | → Interventionsbedarf RAV-Zusammenarbeit |",
-        "| Stellenmeldepflicht-Berufe | → Fokus in Berufsberatung auf diese Berufe |",
-    ])
+    lines.extend(
+        [
+            "### Saisonales Muster (allgemein gültig)\n",
+            "Die SECO-Monatsdaten weisen jeweils die Zahl der Jugendarbeitslosen (15–24 Jährige) aus.",
+            "Diese Gruppe ist für das Schulamt besonders relevant:\n",
+            "**Saisonales Muster:**",
+            "- **Juli/August**: starker Anstieg (Schulabgänger ohne Anschlusslösung)",
+            "  - Beispielwert (Snapshot Aug 2025): +2'186 Jugendarbeitslose (+18.6% vs. Vormonat)",
+            "- **September–November**: deutlicher Rückgang (Lehrstellenantritt, neue Ausbildungen)",
+            "- Dies ist ein natürlicher Rhythmus – aber die Residualgrösse signalisiert Handlungsbedarf\n",
+            "### Interpretation für die Bildungsplanung\n",
+            "| Indikator | Bedeutung für Schulamt |",
+            "|-----------|------------------------|",
+            "| Hohe Aug-Quote in Berufsgruppe X | → Mehr Unterstützung in Brückenangeboten |",
+            "| Steigende Jahresquote 15-24 | → Stärken der Berufswahlvorbereitung |",
+            "| Kanton ZH über Schweizer Schnitt | → Interventionsbedarf RAV-Zusammenarbeit |",
+            "| Stellenmeldepflicht-Berufe | → Fokus in Berufsberatung auf diese Berufe |",
+        ]
+    )
 
     if datasets:
         lines.append("\n### Verfügbare SECO-Datensätze (für Detailanalyse)\n")
@@ -1286,20 +1310,22 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
             "ein **statischer Snapshot** (Dez 2025), nicht live. "
             "Aktuelle Werte unter [amstat.ch](https://www.amstat.ch/v2/amstat_de.html).\n"
         )
-    lines.extend([
-        "### Konzept: Stellensuchende vs. Arbeitslose\n",
-        "> **Eselsbrücke**: Arbeitslose ⊂ Stellensuchende (Teilmenge!)\n",
-        "Die Stellensuchendenquote ist immer **höher** als die Arbeitslosenquote:\n",
-        "| Kategorie | Snapshot Dez 2025 | Einschlusskriterium |",
-        "|-----------|-------------------|---------------------|",
-        "| Arbeitslose | ~149'000 (3.2%) | Sofort vermittelbar, ohne Stelle |",
-        "| Stellensuchende | ~233'900 | Alle RAV-Gemeldeten inkl. Programme |",
-        "| Differenz | ~84'900 | In Umschulung, vorübergehender Beschäftigung etc. |\n",
-        "### Bedeutung für Bildungsplanung\n",
-        "Die Differenz (84'900 Personen) ist in **Qualifizierungsmassnahmen** –",
-        "ein Signal für den Weiterbildungsbedarf und die Nachfrage nach",
-        "Brückenangeboten, Umschulungen und berufsbegleitenden Ausbildungen.",
-    ])
+    lines.extend(
+        [
+            "### Konzept: Stellensuchende vs. Arbeitslose\n",
+            "> **Eselsbrücke**: Arbeitslose ⊂ Stellensuchende (Teilmenge!)\n",
+            "Die Stellensuchendenquote ist immer **höher** als die Arbeitslosenquote:\n",
+            "| Kategorie | Snapshot Dez 2025 | Einschlusskriterium |",
+            "|-----------|-------------------|---------------------|",
+            "| Arbeitslose | ~149'000 (3.2%) | Sofort vermittelbar, ohne Stelle |",
+            "| Stellensuchende | ~233'900 | Alle RAV-Gemeldeten inkl. Programme |",
+            "| Differenz | ~84'900 | In Umschulung, vorübergehender Beschäftigung etc. |\n",
+            "### Bedeutung für Bildungsplanung\n",
+            "Die Differenz (84'900 Personen) ist in **Qualifizierungsmassnahmen** –",
+            "ein Signal für den Weiterbildungsbedarf und die Nachfrage nach",
+            "Brückenangeboten, Umschulungen und berufsbegleitenden Ausbildungen.",
+        ]
+    )
 
     if datasets:
         lines.append("\n### Datensätze auf opendata.swiss\n")
@@ -1308,9 +1334,7 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
             ds_id = ds.get("name", ds.get("id", ""))
             lines.append(f"- **{title}** → ID: `{ds_id}`")
 
-    lines.append(
-        "\n*Für Rohdaten: `seco_search_datasets('Stellensuchende')`*"
-    )
+    lines.append("\n*Für Rohdaten: `seco_search_datasets('Stellensuchende')`*")
     return "\n".join(lines)
 
 
@@ -1447,8 +1471,19 @@ async def seco_get_monthly_report_url(params: MonthlyReportInput) -> str:
         Example: January 2026 data → published February 6, 2026.
     """
     month_names_display = [
-        "", "Januar", "Februar", "März", "April", "Mai", "Juni",
-        "Juli", "August", "September", "Oktober", "November", "Dezember",
+        "",
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
     ]
 
     # URL patterns vary; try the known arbeit.swiss DAM pattern
@@ -1635,20 +1670,38 @@ async def seco_list_cantons() -> str:
         "|------|--------|--------------|",
     ]
     regions = {
-        "ZH": "de", "BE": "de/fr", "LU": "de", "UR": "de", "SZ": "de",
-        "OW": "de", "NW": "de", "GL": "de", "ZG": "de", "FR": "de/fr",
-        "SO": "de", "BS": "de", "BL": "de", "SH": "de", "AR": "de",
-        "AI": "de", "SG": "de", "GR": "de/rm/it", "AG": "de", "TG": "de",
-        "TI": "it", "VD": "fr", "VS": "de/fr", "NE": "fr", "GE": "fr",
+        "ZH": "de",
+        "BE": "de/fr",
+        "LU": "de",
+        "UR": "de",
+        "SZ": "de",
+        "OW": "de",
+        "NW": "de",
+        "GL": "de",
+        "ZG": "de",
+        "FR": "de/fr",
+        "SO": "de",
+        "BS": "de",
+        "BL": "de",
+        "SH": "de",
+        "AR": "de",
+        "AI": "de",
+        "SG": "de",
+        "GR": "de/rm/it",
+        "AG": "de",
+        "TG": "de",
+        "TI": "it",
+        "VD": "fr",
+        "VS": "de/fr",
+        "NE": "fr",
+        "GE": "fr",
         "JU": "fr",
     }
     for code, name in sorted(CANTON_CODES.items()):
         region = regions.get(code, "de")
         lines.append(f"| **{code}** | {name} | {region} |")
 
-    lines.append(
-        "\n*Verwende diese Codes in `canton`-Parametern anderer seco_*-Tools.*"
-    )
+    lines.append("\n*Verwende diese Codes in `canton`-Parametern anderer seco_*-Tools.*")
     return "\n".join(lines)
 
 

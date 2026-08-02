@@ -61,9 +61,7 @@ def assert_rejects(build, error_type: str, field: str) -> None:
     """
     with pytest.raises(ValidationError) as excinfo:
         build()
-    assert [(e["type"], e["loc"]) for e in excinfo.value.errors()] == [
-        (error_type, (field,))
-    ]
+    assert [(e["type"], e["loc"]) for e in excinfo.value.errors()] == [(error_type, (field,))]
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +164,19 @@ class TestInputValidation:
         assert inp.query == "arbeitslose"
 
     def test_dataset_search_query_too_short(self):
-        assert_rejects(lambda: DatasetSearchInput(query="a"),
-                       "string_too_short", "query")
+        assert_rejects(lambda: DatasetSearchInput(query="a"), "string_too_short", "query")
 
     def test_dataset_search_limit_bounds(self):
-        assert_rejects(lambda: DatasetSearchInput(query="test", limit=25),  # max is 20
-                       "less_than_equal", "limit")
-        assert_rejects(lambda: DatasetSearchInput(query="test", limit=0),  # min is 1
-                       "greater_than_equal", "limit")
+        assert_rejects(
+            lambda: DatasetSearchInput(query="test", limit=25),  # max is 20
+            "less_than_equal",
+            "limit",
+        )
+        assert_rejects(
+            lambda: DatasetSearchInput(query="test", limit=0),  # min is 1
+            "greater_than_equal",
+            "limit",
+        )
 
     def test_unemployment_valid_canton(self):
         inp = UnemploymentInput(canton="ZH")
@@ -184,10 +187,16 @@ class TestInputValidation:
         assert inp.canton is None
 
     def test_unemployment_year_bounds(self):
-        assert_rejects(lambda: UnemploymentInput(year=1999),  # too early
-                       "greater_than_equal", "year")
-        assert_rejects(lambda: UnemploymentInput(year=2031),  # too late
-                       "less_than_equal", "year")
+        assert_rejects(
+            lambda: UnemploymentInput(year=1999),  # too early
+            "greater_than_equal",
+            "year",
+        )
+        assert_rejects(
+            lambda: UnemploymentInput(year=2031),  # too late
+            "less_than_equal",
+            "year",
+        )
 
     def test_monthly_report_valid(self):
         inp = MonthlyReportInput(year=2025, month=12, language="de")
@@ -198,16 +207,18 @@ class TestInputValidation:
     def test_monthly_report_invalid_language(self):
         assert_rejects(
             lambda: MonthlyReportInput(year=2025, month=6, language="en"),  # only de/fr/it
-            "string_pattern_mismatch", "language")
+            "string_pattern_mismatch",
+            "language",
+        )
 
     def test_monthly_report_month_bounds(self):
         # `year` traegt hier ebenfalls Bounds. Ein auf den Fehlertyp allein
         # gepruefter Test bliebe gruen, wenn `month=` versehentlich zu `year=`
         # wuerde — deshalb steht das Feld mit in der Erwartung.
-        assert_rejects(lambda: MonthlyReportInput(year=2025, month=13),
-                       "less_than_equal", "month")
-        assert_rejects(lambda: MonthlyReportInput(year=2025, month=0),
-                       "greater_than_equal", "month")
+        assert_rejects(lambda: MonthlyReportInput(year=2025, month=13), "less_than_equal", "month")
+        assert_rejects(
+            lambda: MonthlyReportInput(year=2025, month=0), "greater_than_equal", "month"
+        )
 
     def test_canton_codes_completeness(self):
         """All 26 Swiss cantons must be present."""
@@ -225,14 +236,20 @@ class TestInputValidation:
         assert inp.response_format == ResponseFormat.MARKDOWN
 
     def test_occupation_input_rejects_unknown_format(self):
-        assert_rejects(lambda: OccupationInput(response_format="csv"),  # type: ignore[arg-type]
-                       "enum", "response_format")
+        assert_rejects(
+            lambda: OccupationInput(response_format="csv"),  # type: ignore[arg-type]
+            "enum",
+            "response_format",
+        )
 
     def test_occupation_input_rejects_extra_fields(self):
         # Hier ist `extra_forbidden` der Zweck des Tests, nicht die Fehlerquelle,
         # die es zu vermeiden gilt — entsprechend explizit erwartet.
-        assert_rejects(lambda: OccupationInput(canton="ZH"),  # type: ignore[call-arg]
-                       "extra_forbidden", "canton")
+        assert_rejects(
+            lambda: OccupationInput(canton="ZH"),  # type: ignore[call-arg]
+            "extra_forbidden",
+            "canton",
+        )
 
 
 class TestOccupationTool:
@@ -795,9 +812,7 @@ class TestYouthLiveCsv:
         respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
         )
-        respx.get(csv_url).mock(
-            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
-        )
+        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
         inp = YouthUnemploymentInput(response_format=ResponseFormat.JSON)
         result = await seco_get_youth_unemployment(inp)
         data = json.loads(result)
@@ -814,9 +829,7 @@ class TestYouthLiveCsv:
         respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
         )
-        respx.get(csv_url).mock(
-            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
-        )
+        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
         result = await seco_get_youth_unemployment(YouthUnemploymentInput())
         assert "Live-Daten" in result
         assert "2025-12" in result
@@ -829,9 +842,7 @@ class TestYouthLiveCsv:
         respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
         )
-        respx.get(csv_url).mock(
-            return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8"))
-        )
+        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
         inp = YouthUnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
         data = json.loads(await seco_get_youth_unemployment(inp))
         sample = data["data"]["sample_rows"]
@@ -873,7 +884,10 @@ class TestJobSeekersLiveCsv:
         assert data["live"]["data_source"] == "live_csv"
         assert data["live"]["reference_period"] == "2025-12"
         assert data["live"]["headers"] == [
-            "Datum", "Kanton", "Stellensuchende", "Arbeitslose",
+            "Datum",
+            "Kanton",
+            "Stellensuchende",
+            "Arbeitslose",
         ]
         assert "reference_snapshot" not in data
 
@@ -969,6 +983,5 @@ class TestSsrfValidator:
         # First 5 inserts must have been evicted; the most recent must be present.
         assert "https://example.test/csv/0" not in _server_mod._CSV_CACHE
         assert (
-            f"https://example.test/csv/{_server_mod._CSV_CACHE_MAX + 4}"
-            in _server_mod._CSV_CACHE
+            f"https://example.test/csv/{_server_mod._CSV_CACHE_MAX + 4}" in _server_mod._CSV_CACHE
         )
