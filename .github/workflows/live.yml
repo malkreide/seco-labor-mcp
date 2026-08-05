@@ -1,0 +1,49 @@
+name: Live tests (nightly)
+
+# Warum es diesen Workflow gibt: `ci.yml` laeuft mit `-m "not live"` und
+# schliesst damit genau die Tests aus, die einen Bruch der Quelle bemerken
+# koennen. Die Offline-Tests pruefen die Parser gegen Fixturen — also gegen
+# das, was beim Schreiben erwartet wurde. Aendert eine Quelle ihr Layout,
+# bleiben sie gruen und sind trotzdem falsch.
+#
+# Der Canary ist die Summenprobe der UVG-Tabellen: geparste Zeilen gegen das
+# in derselben Publikation gedruckte Total. Sie schlaegt an, wenn die
+# Extraktion kippt — aber nur, wenn sie auch laeuft.
+
+on:
+  schedule:
+    # 03:17 UTC. Bewusst nicht zur vollen Stunde: Der GitHub-Scheduler
+    # verzoegert Laeufe zu Spitzenzeiten teils erheblich, und ein
+    # Off-Minute-Slot laesst die Quelle ausserdem in Ruhe.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Ein Lauf genuegt; ein zweiter wuerde dieselben fremden Server nochmal fragen.
+concurrency:
+  group: live-tests
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    # Die Quelle ist erreichbar oder nicht; ein haengender Lauf soll nicht
+    # eine Stunde Runner-Zeit binden. Der Retry-Backoff 2s/4s/8s pro Abruf
+    # ist darin bequem enthalten.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run live tests
+        run: PYTHONPATH=src pytest tests/ -m live --run-live -v

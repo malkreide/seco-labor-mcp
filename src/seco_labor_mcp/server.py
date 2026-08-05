@@ -46,6 +46,11 @@ from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 HTTP_TIMEOUT = 30.0
 
+# Portfolio-Standard fuer transiente Fehler. Dieselbe Staffelung nutzt
+# uvg.UVG_BACKOFF_SECONDS; die beiden bleiben getrennt, weil uvg.py server.py
+# nicht auf Modulebene importieren kann (server.py importiert uvg.py).
+HTTP_BACKOFF_SECONDS = (2.0, 4.0, 8.0)
+
 _HTTP_KWARGS: dict[str, Any] = {
     "timeout": HTTP_TIMEOUT,
     # SEC-004: do not auto-follow redirects so we cannot be tricked into
@@ -414,24 +419,52 @@ async def _fetch_text_cached(url: str) -> str | None:
     """Fetch text with a 24 h TTL cache (bounded to _CSV_CACHE_MAX entries).
     Tries UTF-8 then Windows-1252 (common for Swiss admin CSV exports).
     Returns None on any failure (including SSRF policy rejection and
-    unexpected redirects)."""
+    unexpected redirects).
+
+    Retries transient failures with the portfolio backoff 2s/4s/8s. Only 5xx,
+    429 and network errors are retried; 3xx and the remaining 4xx are answers,
+    not outages, and repeating them just costs the caller time.
+
+    A stale cache entry is deliberately *not* served after the retries are
+    exhausted: unlike the UVG envelopes, this path returns bare CSV text with
+    no provenance field, so the caller could not tell fresh data from old.
+    Returning None keeps the failure visible.
+    """
     now = datetime.now()
     cached = _CSV_CACHE.get(url)
     if cached and now - cached[0] < _CSV_TTL:
         return cached[1]
+
+    # Outside the retry loop: a rejected URL is a policy decision, and a second
+    # attempt would resolve DNS again for a target we already refused.
     try:
         await _validate_external_url(url)
-        async with _client_scope() as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            try:
-                text = resp.content.decode("utf-8")
-            except UnicodeDecodeError:
-                text = resp.content.decode("cp1252", errors="replace")
-            _cache_put(url, text)
-            return text
     except Exception:
         return None
+
+    for attempt in range(len(HTTP_BACKOFF_SECONDS) + 1):
+        if attempt:
+            await asyncio.sleep(HTTP_BACKOFF_SECONDS[attempt - 1])
+        try:
+            async with _client_scope() as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                try:
+                    text = resp.content.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = resp.content.decode("cp1252", errors="replace")
+                _cache_put(url, text)
+                return text
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if not (code == 429 or 500 <= code < 600):
+                return None
+        except httpx.RequestError:
+            continue
+        except Exception:
+            # Decoding or cache errors are not transient.
+            return None
+    return None
 
 
 def _parse_csv(text: str) -> dict[str, Any]:
