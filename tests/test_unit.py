@@ -6,6 +6,7 @@ Live tests live in tests/test_live.py and are skipped unless --run-live.
 """
 
 import json
+from datetime import datetime
 
 import httpx
 import pytest
@@ -985,3 +986,122 @@ class TestSsrfValidator:
         assert (
             f"https://example.test/csv/{_server_mod._CSV_CACHE_MAX + 4}" in _server_mod._CSV_CACHE
         )
+
+
+class TestCsvFetchRetry:
+    """Retry-Verhalten von `_fetch_text_cached`.
+
+    Der Pfad setzte bis dahin einen einzigen GET ab und gab bei jedem Fehler
+    `None` zurueck — ein Upstream-Blip sah damit aus wie «keine Daten».
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fast_backoff(self, monkeypatch):
+        """Backoff auf null (geprueft wird die Anzahl Versuche, nicht die
+        Wartezeit) und SSRF-Pruefung ueberbrueckt.
+
+        Die Pruefung loest DNS wirklich auf; gegen eine Testdomain wie
+        `example.test` schlaegt das fehl und `_fetch_text_cached` kehrt zurueck,
+        bevor respx ueberhaupt gefragt wird. Hier geht es um das Retry-Verhalten,
+        nicht um die Policy — die hat ihre eigenen Tests weiter oben.
+        """
+
+        async def _allow(_url: str) -> None:
+            return None
+
+        monkeypatch.setattr(_server_mod, "HTTP_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+        monkeypatch.setattr(_server_mod, "_validate_external_url", _allow)
+        _server_mod._CSV_CACHE.clear()
+        yield
+        _server_mod._CSV_CACHE.clear()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_transient_5xx_then_success(self):
+        url = "https://example.test/data.csv"
+        route = respx.get(url).mock(
+            side_effect=[
+                httpx.Response(503),
+                httpx.Response(500),
+                httpx.Response(200, content=b"a;b\n1;2\n"),
+            ]
+        )
+        assert await _server_mod._fetch_text_cached(url) == "a;b\n1;2\n"
+        assert route.call_count == 3
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_gives_up_after_all_retries(self):
+        url = "https://example.test/down.csv"
+        route = respx.get(url).mock(return_value=httpx.Response(503))
+        assert await _server_mod._fetch_text_cached(url) is None
+        assert route.call_count == 4, "ein Versuch plus drei Retries"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_429_is_retried(self):
+        url = "https://example.test/limited.csv"
+        route = respx.get(url).mock(return_value=httpx.Response(429))
+        assert await _server_mod._fetch_text_cached(url) is None
+        assert route.call_count == 4
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_404_is_not_retried(self):
+        """Ein 404 ist eine Antwort, kein Ausfall."""
+        url = "https://example.test/missing.csv"
+        route = respx.get(url).mock(return_value=httpx.Response(404))
+        assert await _server_mod._fetch_text_cached(url) is None
+        assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_redirect_is_not_retried(self):
+        """follow_redirects=False: ein 302 ist endgueltig, nicht transient."""
+        url = "https://example.test/moved.csv"
+        route = respx.get(url).mock(
+            return_value=httpx.Response(302, headers={"location": "https://elsewhere.test/x"})
+        )
+        assert await _server_mod._fetch_text_cached(url) is None
+        assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_network_error_is_retried(self):
+        url = "https://example.test/flaky.csv"
+        route = respx.get(url).mock(side_effect=httpx.ConnectError("boom"))
+        assert await _server_mod._fetch_text_cached(url) is None
+        assert route.call_count == 4
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stale_cache_is_not_served_silently(self):
+        """Anders als die UVG-Envelopes traegt dieser Pfad kein provenance-Feld.
+        Nach erschoepften Retries darf er deshalb keine alten Daten liefern —
+        der Aufrufer koennte frisch und alt nicht unterscheiden."""
+        url = "https://example.test/stale.csv"
+        _server_mod._CSV_CACHE[url] = (
+            datetime.now() - _server_mod._CSV_TTL * 2,
+            "alte;daten\n",
+        )
+        respx.get(url).mock(return_value=httpx.Response(503))
+        assert await _server_mod._fetch_text_cached(url) is None
+
+    @pytest.mark.asyncio
+    async def test_rejected_url_is_validated_once(self, monkeypatch):
+        """Eine von der SSRF-Policy abgelehnte URL wird nicht erneut aufgeloest.
+
+        Ein zweiter Anlauf brauchte eine zweite DNS-Aufloesung fuer ein Ziel,
+        das wir bereits verweigert haben — genau das Zeitfenster, das
+        `follow_redirects=False` sonst schliesst.
+        """
+        calls = 0
+
+        async def counting(url: str) -> None:
+            nonlocal calls
+            calls += 1
+            raise _server_mod.UrlNotAllowedError("nope")
+
+        monkeypatch.setattr(_server_mod, "_validate_external_url", counting)
+        assert await _server_mod._fetch_text_cached("https://169.254.169.254/csv") is None
+        assert calls == 1
