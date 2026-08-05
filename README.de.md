@@ -42,6 +42,7 @@ Dieser Server verbindet KI-Modelle mit offiziellen Schweizer Arbeitsmarktstatist
 | [opendata.swiss](https://opendata.swiss/de/dataset?q=seco) | CKAN-Katalog mit SECO-CSV-Datensätzen | ✅ Aktiv |
 | [arbeit.swiss](https://www.arbeit.swiss) | Monatliche Pressedokumentation (PDF) | ✅ Aktiv |
 | [amstat.ch](https://www.amstat.ch) | AMSTAT-Referenzportal | ⚠️ JavaScript SPA |
+| [unfallstatistik.ch](https://www.unfallstatistik.ch) | Unfallstatistik UVG (SSUV/KSUV c/o Suva) — Berufsunfälle und Berufskrankheiten | ⚠️ Nur PDF, keine API (siehe unten) |
 
 ---
 
@@ -58,6 +59,56 @@ Dieser Server verbindet KI-Modelle mit offiziellen Schweizer Arbeitsmarktstatist
 | `seco_get_unemployment_by_occupation` | Aufschlüsselung nach Berufshauptgruppe | 🎓 Berufswahl |
 | `seco_get_monthly_report_url` | PDF-URL für SECO-Monatsberichte | Quellenverifizierung |
 | `seco_list_cantons` | Alle 26 Kantonscodes und -namen | Hilfsfunktion |
+| `seco_get_uvg_overview` | UVG-Schlüsselzahlen zu Berufsunfällen und Berufskrankheiten | Risiko-Überblick |
+| `seco_get_uvg_by_branch` | Ergebnisse nach Wirtschaftszweig (NOGA 2008) | 🎓 Berufswahl |
+| `seco_get_uvg_trends` | Zehnjahres-Zeitreihe je Branche | Trendanalyse |
+
+12 von maximal 15 Tools.
+
+---
+
+## Unfallstatistik UVG (SSUV)
+
+Die drei `seco_get_uvg_*`-Tools decken die Risikoseite desselben Arbeitsmarkts
+ab, den die Arbeitslosen-Tools beschreiben: wie viele Berufsunfälle und
+Berufskrankheiten je Branche anfallen und wie sich das über zehn Jahre
+entwickelt.
+
+**Herausgeber ist nicht das SECO.** Die Unfallstatistik UVG wird von der
+Koordinationsgruppe KSUV und der Sammelstelle SSUV c/o Suva, Luzern
+herausgegeben. Das Präfix `seco_` adressiert diesen Server, nicht die Quelle;
+jede Response nennt den tatsächlichen Herausgeber im Feld `source`.
+
+### Architektur-Entscheid: C (dump-first)
+
+Live geprüft am 2026-08-05, vollständige Herleitung in
+[`PROBE_REPORT_UVG.md`](PROBE_REPORT_UVG.md).
+
+Die Quelle hat **keine API**. Ein Link-Scan über sämtliche Datenseiten ergab
+165 PDFs und null Dateien mit `.csv`, `.xlsx` oder `.json`. opendata.swiss kennt
+die Quelle nicht (`count=0` bei sechs von sieben Suchbegriffen), und die
+BFS-dam-API ignoriert ihre Filterparameter stillschweigend. Übrig bleiben drei
+Zugänge, die faktisch maschinenlesbar sind, aber nicht dafür gedacht:
+
+| Zugang | Format | Aktualisierung |
+|---|---|---|
+| `schluesselzahlen_d.htm` | HTML-Tabelle, 5 Jahre, Gesamtschweiz | jährlich |
+| `Ts{YY}.pdf` | Jahresausgabe, Tabellen 1.2 und 2.4 nach NOGA | jährlich, Juni |
+| `WirtKl_{BUV\|NBUV}_{NN}.pdf` | Zehnjahres-Reihe je NOGA-Abteilung | jährlich, Januar |
+
+PDFs werden 24 h gecacht und mit Backoff 2s/4s/8s geladen.
+
+### Was jede Response mitliefert
+
+- `source_freshness.data_year` — das **Datenjahr**, nicht das Ausgabejahr. Die
+  Ausgabe 2026 weist 2024 aus; dieser Nachlauf von zwei Jahren steht da, statt
+  im Kleingedruckten zu verschwinden.
+- `totals_check` — die geparsten Zeilen werden summiert und gegen das in
+  derselben Publikation gedruckte Total gehalten. Ein gebrochenes Layout fällt
+  damit auf, statt zu einer plausibel aussehenden falschen Zahl zu werden.
+- `significant` — die Quelle markiert statistisch signifikante Veränderungen
+  zum Vorjahr mit einem Stern. Dieses Flag bleibt je Datenpunkt erhalten, damit
+  eine Veränderung nur dort als bedeutsam gilt, wo die Quelle das sagt.
 
 ---
 
@@ -108,6 +159,14 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 - `amstat.arbeit.swiss` hat kein öffentliches REST API → Workaround via CKAN
 - Kantonsebene-Detaildaten erfordern CSV-Download
 - URL-Muster der Monatsberichte kann für ältere Reports abweichen
+- UVG-Zahlen stammen aus PDF-Parsing — das Layout war über die Ausgaben 2025
+  und 2026 stabil, ein Redesign kann es aber brechen. Der `totals_check` in
+  jeder Response ist das, was einen solchen Bruch sichtbar statt still macht.
+- UVG-Daten hinken rund zwei Jahre nach (Ausgabe 2026 weist 2024 aus)
+- UVG-Branchendetails folgen NOGA 2008 und fassen Abteilungen teilweise
+  zusammen (`41 – 42`, `77, 79 – 82`); eine kantonale Gliederung gibt es hier nicht
+- Detaildaten jenseits der Publikationen liegen hinter dem CUG-Zugang der SSUV
+  und sind für diesen No-Auth-Server ausser Reichweite
 
 **Phase 2 (geplant):**
 - Automatisches CSV-Caching (24h TTL)
@@ -124,7 +183,7 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 | **Personendaten** | Keine Personendaten — alle Quellen sind aggregierte, anonymisierte Statistiken |
 | **Rate Limits** | Keine externen Limits; Server begrenzt Abfragen auf 20 Ergebnisse; 30 s HTTP-Timeout |
 | **Authentifizierung** | Kein API-Schlüssel erforderlich — opendata.swiss und arbeit.swiss sind öffentlich zugänglich |
-| **Lizenzen** | SECO-Daten unter [Creative Commons CCZero](https://creativecommons.org/publicdomain/zero/1.0/) |
+| **Lizenzen** | SECO-Daten unter [Creative Commons CCZero](https://creativecommons.org/publicdomain/zero/1.0/); UVG-Daten **nicht offen lizenziert** (nicht-kommerziell, siehe Datenlizenz) |
 | **Nutzungsbedingungen** | Gemäss ToS von: [opendata.swiss](https://opendata.swiss/de/terms-of-use), [SECO](https://www.seco.admin.ch), [arbeit.swiss](https://www.arbeit.swiss) |
 | **DSG / DSGVO** | Vollständig konform — keine Personendaten übermittelt oder gespeichert |
 
@@ -132,8 +191,24 @@ Berufsarten mit Arbeitslosenquote ≥ 5% → offene Stellen müssen zuerst dem R
 
 ## Datenlizenz
 
-SECO-Daten auf opendata.swiss stehen unter **Creative Commons CCZero**.  
+Es gelten zwei verschiedene Lizenzen. Der Code dieses Servers steht in beiden
+Fällen unter MIT — die Daten sind davon nicht gedeckt.
+
+**SECO-/AMSTAT-Daten** auf opendata.swiss stehen unter **Creative Commons CCZero**.
 Quelle: Staatssekretariat für Wirtschaft (SECO) — [seco.admin.ch](https://www.seco.admin.ch)
+
+**Daten der Unfallstatistik UVG** sind **nicht** offen lizenziert. Die
+Publikation hält fest:
+
+> «Abdruck – ausser für kommerzielle Nutzung – mit Quellenangabe gestattet.»
+
+Das ist eine Nicht-kommerziell-Klausel mit Quellenangabepflicht. Sie gehört
+KSUV/SSUV und lässt sich durch die MIT-Lizenz dieses Repos nicht aufheben: MIT
+deckt den Code, nicht die Zahlen, die der Code holt. **Wer diesen Server
+kommerziell einsetzt, ist für die UVG-Tools nicht abgedeckt** — das ist direkt
+mit der Sammelstelle zu klären (`unfallstatistik@suva.ch`). Jede UVG-Response
+wiederholt die Einschränkung im Feld `source`, weil ein README dem Modell nicht
+weitergereicht wird.
 
 ---
 

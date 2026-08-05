@@ -42,6 +42,11 @@ dependencies = [
     "httpx>=0.27.0,<1",
     # Pydantic v2 ist die Portfolio-Konvention. v3 waere ein Modellbruch.
     "pydantic>=2.0.0,<3",
+    # pypdf fuer die UVG-Tabellen. Die Quelle publiziert ausschliesslich PDF
+    # (siehe PROBE_REPORT_UVG.md), es gibt kein CSV/JSON. Der Parser haengt am
+    # layout-Extraktionsmodus, dessen Whitespace-Verhalten die Spaltentrennung
+    # traegt -- ein Major-Bump darf hier nicht ungefragt einziehen.
+    "pypdf>=5.0.0,<7",
 ]
 
 [project.optional-dependencies]

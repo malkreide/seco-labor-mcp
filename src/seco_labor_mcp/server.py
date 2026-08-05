@@ -38,6 +38,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
+from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 # ---------------------------------------------------------------------------
 # HTTP client lifecycle (SDK-001: pooled client via FastMCP lifespan)
@@ -1703,6 +1704,303 @@ async def seco_list_cantons() -> str:
 
     lines.append("\n*Verwende diese Codes in `canton`-Parametern anderer seco_*-Tools.*")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tools 10-12: Unfallstatistik UVG (SSUV)
+# ---------------------------------------------------------------------------
+#
+# Datenquelle ist NICHT das SECO, sondern die Koordinationsgruppe KSUV und die
+# Sammelstelle SSUV c/o Suva. Das Praefix seco_ adressiert diesen Server, nicht
+# den Herausgeber; die Quellenangabe im Envelope nennt ihn ausdruecklich.
+
+
+def _uvg_value(value: Any) -> str:
+    """Zahlformat der Quelle: Apostroph als Tausender-, Komma als Dezimaltrenner.
+
+    Nicht _fmt_number verwenden — das castet auf int und macht aus einer
+    Lohnsumme von 359,7 Mrd. stillschweigend 359.
+    """
+    if value is None:
+        return "–"
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}".replace(",", "'")
+    text = f"{value:,.1f}".replace(",", "\x00").replace(".", ",").replace("\x00", "'")
+    return text
+
+
+def _uvg_markdown(envelope: dict[str, Any], title: str, body: list[str]) -> str:
+    """Markdown-Ausgabe mit Provenienz-Fuss.
+
+    Die Envelope-Felder gehen auch in die Markdown-Fassung: Sie sind das
+    Einzige, was das Modell tatsaechlich zu sehen bekommt — ein README wird
+    nicht weitergereicht, und die Nicht-kommerziell-Klausel der Quelle darf
+    nicht an der Formatwahl haengen.
+    """
+    lines = [f"## {title}\n"]
+    if envelope.get("degraded"):
+        lines.append(f"> **Quelle nicht erreichbar.** {envelope.get('note', '')}\n")
+        return "\n".join(lines)
+    if envelope.get("hint"):
+        lines.append(f"> **Kein Treffer.** {envelope['hint']}\n")
+    lines.extend(body)
+    freshness = envelope.get("source_freshness") or {}
+    lines.append("\n---\n")
+    lines.append(f"**Quelle**: {envelope['source']}")
+    parts = [f"`{k}`: {v}" for k, v in freshness.items() if v not in (None, [], {})]
+    if parts:
+        lines.append(f"**Stand**: {' · '.join(parts)}")
+    lines.append(
+        f"**Provenance**: `{envelope['provenance']}` · **Abruf**: {envelope['retrieved_at']}"
+    )
+    return "\n".join(lines)
+
+
+class UvgOverviewInput(BaseModel):
+    """Input for UVG key figures (Switzerland-wide)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    years: int = Field(
+        default=5,
+        description="Number of most recent years to return (1-5). The source publishes five.",
+        ge=1,
+        le=5,
+    )
+    include_non_occupational: bool = Field(
+        default=False,
+        description=(
+            "Also report non-occupational (leisure) accidents NBUV, UVAL and UV IV. "
+            "Default False: this server covers the labour market, leisure accidents are context."
+        ),
+    )
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' or 'json'.",
+    )
+
+
+class UvgBranchInput(BaseModel):
+    """Input for UVG results by economic branch (NOGA 2008)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    noga: str | None = Field(
+        default=None,
+        description=(
+            "NOGA 2008 code, e.g. '43' (finishing trade), '86' (health), '85' (education). "
+            "The publication groups some divisions ('01 - 03', '41 - 42', '77, 79 - 82'); a "
+            "query for '42' matches the row '41 - 42'. "
+            "OMITTING THIS RETURNS THE COMPLETE GRID — all branch rows, the three sector "
+            "totals and the category 'Unbekannt'. It filters nothing out."
+        ),
+        max_length=20,
+    )
+    table: str = Field(
+        default="2.4_BUV",
+        description=(
+            "Which published table to read. '2.4_BUV' = accepted occupational-accident and "
+            "occupational-disease cases, disability pensions, fatalities, running costs. "
+            "'2.4_NBUV' = same for non-occupational accidents. '1.2' = insured full-time "
+            "equivalents and accident risk per 1000 FTE."
+        ),
+        pattern=r"^(2\.4_BUV|2\.4_NBUV|1\.2)$",
+    )
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' or 'json'.",
+    )
+
+
+class UvgTrendInput(BaseModel):
+    """Input for the ten-year branch time series."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    noga: str = Field(
+        ...,
+        description=(
+            "Two-digit NOGA 2008 division, e.g. '43', '86', '85'. Ranges such as '41 - 42' "
+            "exist only in the annual table (seco_get_uvg_by_branch), not in the time series. "
+            "Not every number is occupied (04, 05, 07, 09 are absent)."
+        ),
+        min_length=1,
+        max_length=8,
+    )
+    branch_type: str = Field(
+        default="BUV",
+        description="'BUV' = occupational accident insurance, 'NBUV' = non-occupational.",
+        pattern=r"^(BUV|NBUV|buv|nbuv)$",
+    )
+    indicator: str | None = Field(
+        default=None,
+        description=(
+            "Case-insensitive substring match against the indicator name, no wildcards. "
+            "Examples: 'Fallrisiko', 'Berufskrankheiten', 'Todesfälle'. "
+            "Omit to return all twelve indicators."
+        ),
+        max_length=80,
+    )
+    response_format: ResponseFormat = Field(
+        default=ResponseFormat.MARKDOWN,
+        description="Output format: 'markdown' or 'json'.",
+    )
+
+
+@mcp.tool(
+    name="seco_get_uvg_overview",
+    annotations={
+        "title": "Berufsunfälle und Berufskrankheiten – Schlüsselzahlen (UVG/SSUV)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def seco_get_uvg_overview(params: UvgOverviewInput) -> str:
+    """Switzerland-wide key figures on occupational accidents and diseases (UVG).
+
+    Covers all 22 Swiss accident insurers: registered and accepted cases,
+    accepted occupational diseases, disability pensions, fatalities and costs
+    over the five most recent years.
+
+    Published by KSUV/SSUV c/o Suva — not by SECO. Complements the unemployment
+    tools of this server: same labour market, risk side instead of demand side.
+
+    Args:
+        params (UvgOverviewInput): years, include_non_occupational, response_format
+
+    Returns:
+        str: Key figures with source, provenance and publication date.
+    """
+    envelope = await uvg_overview_impl(
+        years=params.years, include_nbuv=params.include_non_occupational
+    )
+    if params.response_format == ResponseFormat.JSON:
+        return json.dumps(envelope, ensure_ascii=False, indent=2)
+
+    body: list[str] = []
+    section = None
+    for row in envelope.get("rows", []):
+        if row["section"] != section:
+            section = row["section"]
+            years = [v["year"] for v in row["values"]]
+            body.append(f"\n### {section}\n")
+            body.append("| Kennzahl | Einheit | " + " | ".join(str(y) for y in years) + " |")
+            body.append("|---|---|" + "---|" * len(years))
+        values = " | ".join(_uvg_value(v["value"]) for v in row["values"])
+        body.append(f"| {row['label']} | {row['unit'] or ''} | {values} |")
+    return _uvg_markdown(envelope, "Unfallstatistik UVG – Schlüsselzahlen Schweiz", body)
+
+
+@mcp.tool(
+    name="seco_get_uvg_by_branch",
+    annotations={
+        "title": "Berufsunfälle nach Wirtschaftszweig NOGA (UVG/SSUV)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def seco_get_uvg_by_branch(params: UvgBranchInput) -> str:
+    """Occupational accident and disease results per economic branch (NOGA 2008).
+
+    Answers which branches carry which accident risk — the counterpart to
+    seco_get_unemployment_by_occupation for vocational guidance: a Lehrberuf
+    recommendation can weigh demand against occupational risk.
+
+    Every response carries a totals check: the parsed rows are summed and
+    compared against the total printed in the publication.
+
+    Args:
+        params (UvgBranchInput): noga, table, response_format
+
+    Returns:
+        str: Branch rows including sector totals and the category 'Unbekannt'.
+    """
+    envelope = await uvg_by_branch_impl(noga=params.noga, table=params.table)
+    if params.response_format == ResponseFormat.JSON:
+        return json.dumps(envelope, ensure_ascii=False, indent=2)
+
+    columns = envelope.get("columns", [])
+    body: list[str] = []
+    rows = envelope.get("rows", [])
+    if rows:
+        body.append("| Code | Wirtschaftszweig | " + " | ".join(columns) + " |")
+        body.append("|---|---|" + "---|" * len(columns))
+        for row in rows:
+            marker = "**" if row.get("row_type") == "sector" else ""
+            code = row.get("code") or ""
+            values = " | ".join(_uvg_value(row.get(c)) for c in columns)
+            body.append(f"| {code} | {marker}{row['label']}{marker} | {values} |")
+    check = envelope.get("totals_check") or {}
+    if check.get("available"):
+        verdict = "stimmt exakt" if check["match"] else f"Abweichung {check['delta']:+d}"
+        body.append(
+            f"\n*Summenprobe ({check['field']}): Zeilen {_uvg_value(check['sum_rows'])} vs. "
+            f"gedrucktes Total {_uvg_value(check['printed_total'])} — {verdict}.*"
+        )
+    return _uvg_markdown(envelope, "Unfallstatistik UVG – nach Wirtschaftszweig", body)
+
+
+@mcp.tool(
+    name="seco_get_uvg_trends",
+    annotations={
+        "title": "Unfallgeschehen Zeitreihe nach Branche (UVG/SSUV)",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def seco_get_uvg_trends(params: UvgTrendInput) -> str:
+    """Ten-year time series of accident indicators for one NOGA branch.
+
+    Twelve indicators per branch, among them case risk per 1000 full-time
+    equivalents, occupational diseases per 100'000, severe accidents,
+    disability pensions and fatalities.
+
+    Each data point carries a `significant` flag: the source marks statistically
+    significant year-on-year changes with an asterisk. Report a change as
+    significant only where that flag is set.
+
+    Args:
+        params (UvgTrendInput): noga, branch_type, indicator, response_format
+
+    Returns:
+        str: Time series per indicator with mean and trend.
+    """
+    envelope = await uvg_trends_impl(
+        noga=params.noga, branch_type=params.branch_type, indicator=params.indicator
+    )
+    if params.response_format == ResponseFormat.JSON:
+        return json.dumps(envelope, ensure_ascii=False, indent=2)
+
+    indicators = envelope.get("indicators", [])
+    body: list[str] = []
+    if indicators:
+        label = envelope.get("branch_label") or ""
+        body.append(
+            f"**NOGA {envelope.get('noga')} – {label}** ({envelope.get('insurance_branch')})\n"
+        )
+        years = [p["year"] for p in indicators[0]["series"]]
+        body.append("| Kennzahl | " + " | ".join(str(y) for y in years) + " | Mittel | Trend |")
+        body.append("|---|" + "---|" * (len(years) + 2))
+        for ind in indicators:
+            cells = []
+            for point in ind["series"]:
+                mark = "*" if point["significant"] else ""
+                cells.append(f"{point['value']}{mark}")
+            body.append(
+                f"| {ind['indicator']} | "
+                + " | ".join(cells)
+                + f" | {ind['mean']} | {ind['trend_pct']}% |"
+            )
+        body.append("\n*\\* = statistisch signifikante Veränderung gegenüber dem Vorjahr.*")
+    return _uvg_markdown(envelope, "Unfallstatistik UVG – Zeitreihe nach Branche", body)
 
 
 # ---------------------------------------------------------------------------
