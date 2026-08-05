@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Unfallstatistik UVG (SSUV): drei Tools für Berufsunfälle und
+  Berufskrankheiten** — `seco_get_uvg_overview` (Schlüsselzahlen Gesamtschweiz),
+  `seco_get_uvg_by_branch` (Ergebnisse nach NOGA-2008-Wirtschaftszweig) und
+  `seco_get_uvg_trends` (Zehnjahres-Zeitreihe je Branche). Damit deckt der
+  Server die Risikoseite desselben Arbeitsmarkts ab, den die Arbeitslosen-Tools
+  beschreiben. Tool-Bestand: 12 von maximal 15.
+
+  Herausgeber ist die Koordinationsgruppe KSUV mit der Sammelstelle SSUV c/o
+  Suva — **nicht das SECO**. Das Präfix `seco_` adressiert den Server, nicht die
+  Quelle; das Feld `source` jeder Response nennt den Herausgeber ausdrücklich.
+
+  Architektur C (dump-first), empirisch begründet in `PROBE_REPORT_UVG.md`: Die
+  Quelle hat keine API, ein Link-Scan über alle Datenseiten ergab 165 PDFs und
+  null maschinenlesbare Datendateien.
+
+  **Nutzungsrechte:** Die UVG-Daten sind nicht offen lizenziert («Abdruck ausser
+  für kommerzielle Nutzung mit Quellenangabe gestattet»). Die MIT-Lizenz dieses
+  Repos deckt den Code, nicht die Zahlen. Die Einschränkung steht deshalb in
+  jedem Envelope und nicht bloss im README — ein README wird dem Modell nicht
+  weitergereicht.
+
+### Known findings
+
+Vier Eigenheiten der Quelle, die jede für sich zu einem stillen Datenfehler
+geführt hätten. Sie stehen hier, damit derselbe Griff beim nächsten
+PDF-basierten Portfolio-Server nicht neu erarbeitet werden muss.
+
+- **Zwei unvereinbare Zahlenformate in derselben Quelle.** Die Jahresausgabe
+  trennt Tausender mit einem gewöhnlichen Leerzeichen und Dezimalstellen mit
+  Komma (`1 097 154`, `137,5`), die Branchen-PDF mit Apostroph und Punkt
+  (`1'057`, `4.25`).
+
+  Der Leerzeichen-Trenner ist der gefährliche Fall, weil er dasselbe Zeichen ist,
+  das auch Spalten trennt: `166 534 234` ist als `166534234` genauso lesbar wie
+  als `166 534 | 234`. Ein `split()` liefert dann plausible Integers und kein
+  Fehlersignal — ein Parser, der nicht abstürzt, sondern lügt. Aus dem Textlayer
+  allein ist das nicht auflösbar; die Zahlen kommen deshalb aus dem
+  Layout-Extraktionsmodus, wo die Spaltenabstände des Satzes erhalten bleiben.
+  Die Trennschwelle ist gemessen, nicht geraten: Lücken innerhalb von Zahlen
+  reichen bis 10 Leerzeichen, die kleinste Lücke zwischen zwei Spalten misst 113.
+
+  *Schweizer Statistik-PDFs trennen Tausender mit demselben Zeichen wie Spalten —
+  wer beides gleich behandelt, bekommt aus 1 097 154 Vollbeschäftigten drei
+  Zahlen und keine Warnung.*
+
+- **Der Stern ist Information.** Werte erscheinen als `162*` oder `*145`. Laut
+  `Beschrieb_Branchen_d.pdf` markiert er eine statistisch signifikante
+  Veränderung zum Vorjahr. Ihn wegzuwerfen hiesse, jede Bewegung gleich
+  bedeutsam aussehen zu lassen; er bleibt als Feld `significant` je Datenpunkt
+  erhalten.
+
+- **Die Indexseiten der Quelle sind unzuverlässiger als ihre Dateien.**
+  `branchen_d.htm` nennt «Letzte Aktualisierung: 07.11.2023», während die
+  verlinkten PDFs `Version: 2.01.00 / 09.01.2026` tragen. `jahr_d.htm` verlinkt
+  noch `Ts25.pdf`, obwohl `Ts26.pdf` seit Juni 2026 online ist. Folglich wird
+  `source_freshness` aus der Datei abgeleitet und die aktuelle Ausgabe durch
+  direktes Proben von `Ts{YY}.pdf` ermittelt, nicht durch Scrapen des Index.
+
+- **Die Quelle rundet gegen sich selbst.** In der Ausgabe 2025 ergeben die
+  gedruckten Sektorzeilen der Tabelle 1.2 zusammen 4 469 213 bei einem
+  gedruckten Total von 4 469 212 — im Rohtext bestätigt, also eine Differenz der
+  Publikation, nicht der Extraktion. Die Summenprobe prüft deshalb auf Toleranz
+  statt auf exakte Gleichheit: Rundung ist 1, ein gebrochenes Layout sind
+  Grössenordnungen.
+
+
 - **Versions-Badge in beiden READMEs** (`0.3.4`). Bis jetzt war die Version im
   README nur über den dynamischen PyPI-Badge sichtbar, und `C8` meldete auf
   INFO-Ebene, dass es keinen Anker zum Abgleichen gibt — «nichts gefunden» soll
