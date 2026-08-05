@@ -25,9 +25,23 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "fastmcp>=1.0.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.0.0",
+    # Obergrenzen als Schutz vor Major-Bumps, die ohne Codeaenderung einschlagen.
+    #
+    # fastmcp: auf PyPI liegt bereits eine 4.0-Beta (4.0.0b1). Solange `>=1.0.0`
+    # nach oben offen steht, zieht der erste stabile 4.0-Release ungefragt ein
+    # neues Major. Dieses Repo nutzt Variant B (`from fastmcp import FastMCP`)
+    # und ist auf der 3.x-Linie verifiziert (getestet mit 3.4.5).
+    #
+    # Wichtig fuer die laufende Fleet-Migration auf MCP-Spec 2026-07-28: fastmcp
+    # 3.x zieht `mcp<2.0` (aufgeloest: mcp 1.29.0), waehrend mcp 2.0.0 stabil
+    # verfuegbar ist. Der Sprung auf mcp 2.x erfolgt deshalb bewusst ueber ein
+    # fastmcp-Upgrade, nicht als Nebenwirkung eines offenen Ranges.
+    "fastmcp>=1.0.0,<4",
+    # httpx ist pre-1.0; auf PyPI stehen bereits 1.0.dev-Releases. Das Major
+    # bricht erfahrungsgemaess Transport- und Mock-Verhalten (respx).
+    "httpx>=0.27.0,<1",
+    # Pydantic v2 ist die Portfolio-Konvention. v3 waere ein Modellbruch.
+    "pydantic>=2.0.0,<3",
 ]
 
 [project.optional-dependencies]

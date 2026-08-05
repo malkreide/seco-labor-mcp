@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Laufzeit-Abhängigkeiten mit Obergrenzen versehen** (`fastmcp<4`, `httpx<1`,
+  `pydantic<3`). Alle drei standen nach oben offen, und für alle drei liegt der
+  nächste Major-Sprung bereits auf PyPI: `fastmcp 4.0.0b1`, `httpx 1.0.dev*`.
+  Eine Beta wird von pip zwar nicht ohne `--pre` gezogen — der erste stabile
+  Release desselben Majors aber sehr wohl, und dann ohne eine einzige
+  Codeänderung hier.
+
+  Relevant für die laufende Fleet-Migration auf MCP-Spec 2026-07-28: `fastmcp`
+  3.x zieht `mcp<2.0` (aufgelöst: `mcp 1.29.0`), während `mcp 2.0.0` bereits
+  stabil ist. Der Schritt auf `mcp 2.x` soll ein bewusstes fastmcp-Upgrade sein,
+  nicht die Nebenwirkung eines offenen Ranges. Die Schranken frieren den
+  verifizierten Stand ein, ohne ihn zu verschieben: vor und nach der Änderung
+  lösen dieselben Versionen auf (`fastmcp 3.4.5`, `httpx 0.28.1`,
+  `pydantic 2.13.4`), 69 Offline-Tests bleiben grün.
+
 - **`ruff` mit Obergrenze gepinnt (`>=0.5.0,<0.17`).** ruff ist pre-1.0; seine
   Minors sind die Stelle, an der Regelverhalten und neue Checks innerhalb der
   gewählten Familien landen. Ohne Cap installiert die CI die jeweils neuste
