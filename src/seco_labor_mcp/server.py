@@ -554,6 +554,64 @@ def _select_rows_for_canton(
 # ---------------------------------------------------------------------------
 
 
+class UpstreamSchemaError(RuntimeError):
+    """Die Antwort kam an, sieht aber anders aus, als der Code sie liest.
+
+    Bewusst **kein** Ausfuehrungsfehler im Sinne von ``_to_execution_error``:
+    Ein anderer Suchbegriff hilft hier nicht, und eine Zeichenkette an das
+    Modell zurueckzugeben hiesse, ihm eine Handlung anzubieten, die es nicht
+    gibt. Der Typ ist ``_to_execution_error`` unbekannt und wird deshalb
+    weitergereicht — FastMCP macht daraus ``isError: true`` (OBS-001).
+    """
+
+
+def _ckan_result(payload: object, action: str) -> dict:
+    """Den ``result``-Block einer CKAN-Antwort holen, oder laut scheitern.
+
+    Ein Default auf dem Wurzelpfad schreibt jede Strukturaenderung in ein
+    gueltiges leeres Ergebnis um, und fuer das Modell ist das nicht von «die
+    Quelle kennt das nicht» zu unterscheiden (FID-006).
+    """
+    if not isinstance(payload, dict):
+        raise UpstreamSchemaError(
+            f"CKAN `{action}`: Antwort ist {type(payload).__name__} und kein Objekt."
+        )
+    if "result" not in payload:
+        raise UpstreamSchemaError(
+            f"CKAN `{action}`: Antwort ohne `result`. Vorhandene Schluessel: "
+            f"{sorted(payload)}. Das ist keine Leermenge — die Struktur der "
+            "Quelle hat sich geaendert."
+        )
+    result = payload["result"]
+    if not isinstance(result, dict):
+        raise UpstreamSchemaError(
+            f"CKAN `{action}`: `result` ist {type(result).__name__} und kein Objekt."
+        )
+    return result
+
+
+def _ckan_results(payload: object) -> list:
+    """Die Trefferliste einer ``package_search``-Antwort, oder laut scheitern.
+
+    Sechs Werkzeuge lasen die Liste mit zwei Defaults hintereinander. Fiel
+    ``result`` weg, antworteten sie «Keine SECO-Datensaetze gefunden» samt
+    Vorschlaegen fuer andere Suchbegriffe — fuer das Modell nicht davon zu
+    unterscheiden, dass es zu dieser Anfrage wirklich nichts gibt.
+
+    Bestaetigt wird die **Anwesenheit** von ``results``, nicht sein Inhalt:
+    ``results: []`` ist eine Aussage der Quelle und bleibt eine leere Suche.
+    CKAN liefert den Schluessel auch bei null Treffern.
+    """
+    result = _ckan_result(payload, "package_search")
+    if "results" not in result:
+        raise UpstreamSchemaError(
+            "CKAN `package_search`: `result` ohne `results`. Vorhandene "
+            f"Schluessel: {sorted(result)}. CKAN liefert `results` auch bei null "
+            "Treffern — dies ist keine leere Suche."
+        )
+    return result["results"]
+
+
 async def _ckan_search(query: str, limit: int = 10) -> dict:
     """Search opendata.swiss CKAN for SECO datasets."""
     async with _client_scope() as client:
@@ -743,7 +801,7 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
     except Exception as e:
         return _to_execution_error(e)
 
-    datasets = result.get("result", {}).get("results", [])
+    datasets = _ckan_results(result)
 
     if not datasets:
         return (
@@ -816,7 +874,7 @@ async def seco_get_dataset(params: DatasetDetailsInput) -> str:
             "Use seco_search_datasets to find valid dataset IDs."
         )
 
-    ds = result.get("result", {})
+    ds = _ckan_result(result, "package_show")
     title = _extract_title(ds.get("title", ""))
     notes = _extract_title(ds.get("notes", ""))
     modified = ds.get("metadata_modified", "")[:10]
@@ -935,7 +993,7 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
     except Exception as e:
         return _to_execution_error(e)
 
-    datasets = search_result.get("result", {}).get("results", [])
+    datasets = _ckan_results(search_result)
 
     canton_filter = params.canton.upper() if params.canton else None
     if canton_filter and canton_filter not in CANTON_CODES:
@@ -1134,7 +1192,7 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     # Try to fetch youth unemployment dataset from opendata.swiss
     try:
         search_result = await _ckan_search("Jugendarbeitslose Alter", limit=5)
-        datasets = search_result.get("result", {}).get("results", [])
+        datasets = _ckan_results(search_result)
     except Exception:
         datasets = []
 
@@ -1305,7 +1363,7 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
 
     try:
         search_result = await _ckan_search("Stellensuchende Kantone", limit=5)
-        datasets = search_result.get("result", {}).get("results", [])
+        datasets = _ckan_results(search_result)
     except Exception:
         datasets = []
 
@@ -1427,7 +1485,7 @@ async def seco_get_open_positions(params: OpenPositionsInput) -> str:
     """
     try:
         search_result = await _ckan_search("offene Stellen Vakanzen", limit=5)
-        datasets = search_result.get("result", {}).get("results", [])
+        datasets = _ckan_results(search_result)
     except Exception:
         datasets = []
 
@@ -1633,7 +1691,7 @@ async def seco_get_unemployment_by_occupation(params: OccupationInput) -> str:
     """
     try:
         search_result = await _ckan_search("Berufshauptgruppe Berufsgruppe arbeitslose", limit=5)
-        datasets = search_result.get("result", {}).get("results", [])
+        datasets = _ckan_results(search_result)
     except Exception:
         datasets = []
 

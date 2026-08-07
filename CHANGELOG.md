@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Eine Strukturänderung von opendata.swiss wurde zu «keine SECO-Datensätze».**
+  Sechs Werkzeuge lasen die Trefferliste mit zwei Defaults hintereinander:
+  `search_result.get("result", {}).get("results", [])`.
+
+  Fällt `result` weg, war `datasets` leer, und die Werkzeuge antworteten «Keine
+  SECO-Datensätze für '<Suche>' gefunden» samt Vorschlägen für andere
+  Suchbegriffe. Für das Modell ist das nicht davon zu unterscheiden, dass es zu
+  dieser Anfrage wirklich nichts gibt — und der Hinweis, es mit
+  «Arbeitslosigkeit» statt «Kurzarbeit» zu versuchen, macht den Ausfall noch
+  überzeugender. **Fünf der sechs Stellen** sahen das `success`-Envelope dabei
+  gar nicht erst an.
+
+  Alle sechs laufen jetzt über `_ckan_results()`, das `result` **und**
+  `results` bestätigt; `seco_get_dataset_details` nutzt `_ckan_result()` für
+  denselben Wurzelpfad. Bei Abweichung fliegt `UpstreamSchemaError` mit den
+  tatsächlich vorhandenen Schlüsseln in der Meldung.
+
+  **Die Einordnung ist die eigentliche Entscheidung.** Der Typ ist
+  `_to_execution_error` bewusst *unbekannt* und wird deshalb weitergereicht:
+  Ein Ausführungsfehler gibt eine Zeichenkette an das Modell zurück, damit es
+  etwas anderes versuchen kann — bei einer Formänderung gibt es nichts anderes
+  zu versuchen. FastMCP macht daraus `isError: true` (OBS-001).
+
+  `results: []` bleibt eine leere Suche mit der freundlichen Vorschlagsliste:
+  Bestätigt wird die **Anwesenheit** des Schlüssels, nicht sein Inhalt.
+
+  Gefunden im Portfolio-Durchlauf zu
+  [`FID-006`](https://github.com/malkreide/mcp-audit-skill/blob/main/checks/FID-006.md)
+  am 2026-08-07: Acht Server im Portfolio sprechen mit CKAN, sieben defaulteten
+  `result`.
+
+### Fixed
+
 - **The retry had six defects, all inherited from the shared template.** Both HTTP paths in this package copied their retry from `reference/retry_backoff.py` in
   [mcp-data-source-probe-skill](https://github.com/malkreide/mcp-data-source-probe-skill),
   and the template shipped these until 2026-08-07. A sweep across eleven
