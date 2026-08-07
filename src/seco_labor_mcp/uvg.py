@@ -27,12 +27,16 @@ from __future__ import annotations
 import asyncio
 import html as _html
 import re
+import time
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
+
+from . import retry_policy
 
 # ---------------------------------------------------------------------------
 # Endpunkte
@@ -125,21 +129,42 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
     await _validate_external_url(url)
 
     last_error: Exception | None = None
+    deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
+    attempts = 0
+
     for attempt in range(len(UVG_BACKOFF_SECONDS) + 1):
         if attempt:
-            await asyncio.sleep(UVG_BACKOFF_SECONDS[attempt - 1])
+            delay = retry_policy.compute_delay(attempt, last_error)
+            # Eine Wartezeit, die das Budget überdauert, wartet für niemanden:
+            # Der Aufrufende hat aufgegeben, bevor sie endet. Dann lieber Schluss.
+            if delay >= deadline - time.monotonic():
+                break
+            await asyncio.sleep(delay)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        attempts += 1
         try:
             async with _client_scope() as client:
-                resp = await client.get(url)
-                if resp.status_code == 404 and allow_404:
-                    raise FileNotFoundError(url)
-                resp.raise_for_status()
-                payload = resp.content
+                # httpx begrenzt pro Operation, und sein Read-Timeout beginnt
+                # mit jedem Chunk von vorn — ein tröpfelndes PDF überdauert
+                # jede Einzelschranke, ohne dass ein Read abläuft.
+                # `asyncio.timeout` ist die Wanduhr, die das Budget zusagt.
+                async with asyncio.timeout(remaining):
+                    resp = await client.get(url)
+                    if resp.status_code == 404 and allow_404:
+                        raise FileNotFoundError(url)
+                    resp.raise_for_status()
+                    payload = resp.content
                 last_modified = resp.headers.get("last-modified")
                 _cache_put(url, payload, last_modified)
                 return payload, last_modified, "live"
         except FileNotFoundError:
             raise
+        except TimeoutError as exc:  # Budget weg, nicht bloss dieser Versuch
+            last_error = exc
+            break
         except httpx.HTTPStatusError as exc:
             last_error = exc
             code = exc.response.status_code
@@ -151,7 +176,27 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
     # Abgelaufener Cache ist besser als nichts — das ist der degraded-Pfad.
     if cached:
         return cached[1], cached[2], "cached"
-    raise UvgSourceUnavailableError(f"{url} nach {len(UVG_BACKOFF_SECONDS)} Retries: {last_error}")
+    # Typ und Host statt nur `str(last_error)`: httpx.ConnectTimeout,
+    # ReadTimeout und ConnectError tragen ein LEERES str() und sind genau die
+    # Fehler, die ein echter Ausfall produziert. Die Meldung endete deshalb nach
+    # dem Doppelpunkt und nannte weder Fehlerart noch Host. Wer wrappt, muss den
+    # Typ nennen.
+    host = urlsplit(url).hostname
+    if last_error is None:
+        raise UvgSourceUnavailableError(
+            f"{url}: kein Versuch unternommen, das Budget von "
+            f"{retry_policy.RETRY_TOTAL_BUDGET:g}s war schon aufgebraucht (host={host})"
+        )
+    grund = (
+        f"alle {len(UVG_BACKOFF_SECONDS) + 1} Versuche verbraucht"
+        if attempts >= len(UVG_BACKOFF_SECONDS) + 1
+        else f"Budget von {retry_policy.RETRY_TOTAL_BUDGET:g}s nach {attempts} aufgebraucht"
+    )
+    detail = str(last_error) or "keine weitere Angabe"
+    raise UvgSourceUnavailableError(
+        f"{url} nach {attempts} Versuch(en) — {grund}: "
+        f"{type(last_error).__name__}: {detail} (host={host})"
+    ) from last_error
 
 
 # ---------------------------------------------------------------------------

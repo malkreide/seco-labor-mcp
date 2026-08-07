@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The retry had six defects, all inherited from the shared template.** Both HTTP paths in this package copied their retry from `reference/retry_backoff.py` in
+  [mcp-data-source-probe-skill](https://github.com/malkreide/mcp-data-source-probe-skill),
+  and the template shipped these until 2026-08-07. A sweep across eleven
+  servers found that none read `Retry-After` and none jittered — one template,
+  eleven copies, not eleven independent omissions.
+  1. **No jitter.** The ladder was deterministic, so every client that hit the
+     same outage retried in lockstep and the load returned as a wave exactly
+     when the source recovered — the retry storm extending the outage it was
+     meant to bridge. Now spread into `[0.5x, 1.5x]`.
+  2. **`Retry-After` was never read.** A 429 or 503 answers the very question
+     the backoff curve guesses at. Both RFC 9110 §10.2.3 forms are now read
+     (delta-seconds and HTTP-date); an unparseable header yields `None` and
+     falls back to the curve — it must never crash on the error path. The
+     jitter on top is one-sided `[1.0x, 1.25x]`: the source said *when*, so
+     later is polite and earlier ignores the value just read.
+  3. **No cap on a single wait**, and the cap now binds *after* the jitter.
+     `min(cap, base) * jitter` and `min(cap, base * jitter)` both contain a cap
+     and a jitter; only the second is bounded — 20s times 1.5 is 30s.
+  4. **The budget counted attempts, not seconds.** Four attempts against an
+     upstream that takes 30s to time out is two minutes inside one tool call,
+     and an attempt count never says so. Now 25s for the whole call, anchored
+     on the MCP SDK's `MCP_DEFAULT_TIMEOUT = 30.0`.
+  5. **Nothing held that budget.** It is now an `asyncio.timeout` wall-clock
+     deadline rather than an httpx timeout: httpx bounds each *operation*, and
+     its read timeout restarts with every chunk, so a slowly trickling response
+     outlived the budget without any single read expiring.
+  6. **`uvg.py` interpolated the empty message.** `UvgSourceUnavailableError`
+     stays — it is a typed error and the degraded cache path depends on it —
+     but the message read `f"{url} nach 3 Retries: {last_error}"`, and
+     `httpx.ConnectTimeout`, `ReadTimeout` and `ConnectError` all carry an
+     **empty** `str()`. Those are the only errors a real outage produces, so
+     the sentence stopped at the colon and named neither the failure mode nor
+     the host. It now names the exception type, the host and which of the two
+     limits ran out. `server.py::_fetch_text_cached` returns `None` on failure
+     and never had this problem.
+
+  **Both call sites now share one policy module.** `server.py` and `uvg.py`
+  each carried their own copy of the same `(2.0, 4.0, 8.0)` ladder. That is the
+  portfolio's mistake one scale down — the defect these functions inherited came
+  from a template copied into eleven servers, and inside this package the same
+  code was copied twice. Two copies drift, and a drifted retry is invisible:
+  nothing fails, one path is just less patient than the other. The new
+  `retry_policy.py` holds the shared half; what is retried stays with each call
+  site, because their non-retryable statuses genuinely differ (`uvg.py` treats a
+  404 on `Ts27.pdf` as an answer, not an outage).
+
+  New `tests/test_retry_policy.py`: `Retry-After` in both forms plus the
+  refusal cases, the jitter spread, that the cap binds after jittering, and the
+  one-sided `Retry-After` jitter.
+
 ### Added
 
 - **Unfallstatistik UVG (SSUV): drei Tools für Berufsunfälle und
