@@ -25,6 +25,7 @@ import json
 import os
 import re
 import socket
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -37,7 +38,7 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__
+from . import __version__, retry_policy
 from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 # ---------------------------------------------------------------------------
@@ -442,24 +443,46 @@ async def _fetch_text_cached(url: str) -> str | None:
     except Exception:
         return None
 
+    deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
+    last_error: Exception | None = None
+
     for attempt in range(len(HTTP_BACKOFF_SECONDS) + 1):
         if attempt:
-            await asyncio.sleep(HTTP_BACKOFF_SECONDS[attempt - 1])
+            delay = retry_policy.compute_delay(attempt, last_error)
+            # A wait that outlasts the budget is a wait for nobody: the caller
+            # has given up by the time it ends. Stop instead of sleeping.
+            if delay >= deadline - time.monotonic():
+                return None
+            await asyncio.sleep(delay)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
         try:
             async with _client_scope() as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
+                # httpx bounds each operation and restarts its read timeout
+                # with every chunk, so a slowly trickling CSV outlives a
+                # per-operation limit without any single read expiring.
+                # `asyncio.timeout` is the wall-clock bound the budget promises.
+                async with asyncio.timeout(remaining):
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    payload = resp.content
                 try:
-                    text = resp.content.decode("utf-8")
+                    text = payload.decode("utf-8")
                 except UnicodeDecodeError:
-                    text = resp.content.decode("cp1252", errors="replace")
+                    text = payload.decode("cp1252", errors="replace")
                 _cache_put(url, text)
                 return text
+        except TimeoutError:  # the budget is gone, not just this attempt
+            return None
         except httpx.HTTPStatusError as exc:
+            last_error = exc
             code = exc.response.status_code
             if not (code == 429 or 500 <= code < 600):
                 return None
-        except httpx.RequestError:
+        except httpx.RequestError as exc:
+            last_error = exc
             continue
         except Exception:
             # Decoding or cache errors are not transient.
