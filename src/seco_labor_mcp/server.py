@@ -664,7 +664,7 @@ def _format_datasets_markdown(datasets: list[dict]) -> str:
     for ds in datasets:
         title = _extract_title(ds.get("title", ""))
         ds_id = ds.get("name", ds.get("id", ""))
-        modified = ds.get("metadata_modified", "")[:10]
+        modified = (ds.get("metadata_modified") or "")[:10]
         notes = _extract_title(ds.get("notes", "")) or ""
         resources = ds.get("resources", [])
 
@@ -817,7 +817,7 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
                 {
                     "id": ds.get("name", ds.get("id", "")),
                     "title_de": _extract_title(ds.get("title", "")),
-                    "metadata_modified": ds.get("metadata_modified", "")[:10],
+                    "metadata_modified": (ds.get("metadata_modified") or "")[:10],
                     "resource_count": len(ds.get("resources", [])),
                     "resources": [
                         {
@@ -877,7 +877,7 @@ async def seco_get_dataset(params: DatasetDetailsInput) -> str:
     ds = _ckan_result(result, "package_show")
     title = _extract_title(ds.get("title", ""))
     notes = _extract_title(ds.get("notes", ""))
-    modified = ds.get("metadata_modified", "")[:10]
+    modified = (ds.get("metadata_modified") or "")[:10]
     resources = ds.get("resources", [])
     license_title = ds.get("license_title", "")
     tags = [_extract_title(t.get("name", "")) for t in ds.get("tags", [])]
@@ -924,7 +924,14 @@ async def seco_get_dataset(params: DatasetDetailsInput) -> str:
         rname = _extract_title(r.get("name", ""))
         url = r.get("url", "")
         size = r.get("size")
-        last_mod = r.get("last_modified", "")[:10]
+        # `or ""` statt eines Vorgabewerts: CKAN schickt den Schluessel mit,
+        # aber mit `null` — gemessen am 2026-08-14 in 165 von 165 Ressourcen
+        # aus 38 Datensaetzen. `.get(k, "")` greift dann nicht, und das
+        # anschliessende Schneiden lief auf `None`. Dieses Tool ist daran fuer
+        # jeden Datensatz mit Ressourcen abgestuerzt. Dieselbe Form drei Zeilen
+        # weiter oben und in zwei anderen Funktionen: gleicher Ausdruck,
+        # gleicher Absturz, sobald die Quelle dort ebenfalls `null` schickt.
+        last_mod = (r.get("last_modified") or "")[:10]
         size_str = f" ({_fmt_number(size)} Bytes)" if size else ""
         lines.append(f"**[{fmt}]** {rname}{size_str}")
         if last_mod:
