@@ -7,8 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Eine aufgezeichnete Antwort je externem Endpunkt**, in `tests/fixtures/`,
+  mit Herkunft, Aufnahmedatum, Auswahlregel und SHA-256 je Datei in
+  `tests/fixtures/PROVENANCE.md`. Neu aufzeichnen mit
+  `python scripts/record_fixtures.py`, geladen wird über `tests/fixture_data.py`.
+  Aufgezeichnet sind beide CKAN-Aktionen, eine CSV-Ressource, die beiden
+  HTML-Seiten von unfallstatistik.ch und zwei PDFs. Gekürzt ist immer die Zahl
+  der Einträge — Zeilen einer CSV, Seiten eines PDF —, nie ihr Inhalt.
+  Die übrige Suite arbeitet auf *nachgebildeten* Fixturen; `test_uvg.py` sagt
+  das selbst: «Was diese Tests nicht können: eine falsche Grundannahme fangen.»
+  Genau diese Lücke schliessen die Aufzeichnungen — sie haben in diesem Zug
+  zwei Defekte und einen Quellenbefund aufgedeckt.
+- **Befund vom 2026-08-14 in `PROVENANCE.md`: der gepinnte Organisationsfilter
+  trifft niemanden mehr.** `SECO_ORG` gibt es auf opendata.swiss nicht (mehr) —
+  `organization_show` antwortet 404, und in den 176 Einträgen von
+  `organization_list` kommt kein SECO vor. Dieselbe Suche liefert mit `fq`
+  **0** und ohne `fq` mehrere tausend Treffer; beide Antworten sind
+  aufgezeichnet. Wirkung: alle sechs CKAN-gestützten Werkzeuge liefern nichts.
+  Bewusst nicht in diesem Zug behoben — den Filter zu streichen wäre keine
+  Reparatur, sondern eine andere Zusage: die Antworten hiessen weiter
+  «SECO-Datensätze», wären aber Daten des BFS und der Kantone.
+
 ### Fixed
 
+- **`seco_get_dataset` stürzte für jeden Datensatz mit Ressourcen ab.** CKAN
+  schickt `last_modified` mit — aber als `null`. Gemessen **165 von 165**
+  Ressourcen aus 38 Datensätzen. `r.get("last_modified", "")` greift bei einem
+  vorhandenen Schlüssel nicht zum Vorgabewert, und das anschliessende `[:10]`
+  lief auf `None`: `TypeError`. Der handgeschriebene Stub setzte dort einen
+  String, deshalb blieb die Suite grün. Jetzt `(… or "")[:10]`, an allen vier
+  Stellen mit demselben Ausdruck — gleicher Absturz, sobald die Quelle auch
+  dort `null` schickt.
 - **Eine Strukturänderung von opendata.swiss wurde zu «keine SECO-Datensätze».**
   Sechs Werkzeuge lasen die Trefferliste mit zwei Defaults hintereinander:
   `search_result.get("result", {}).get("results", [])`.
