@@ -81,7 +81,20 @@ def uvg_attribution(edition: str | None = None) -> str:
 # Portfolio-Standard 2s/4s/8s. Anders als die CSV-Helfer in server.py, die
 # einen einzigen GET absetzen, retryt dieser Pfad — die Quelle liefert PDFs
 # von 2 MB, und genau die sind es, die bei Lastspitzen mit 5xx abbrechen.
-UVG_BACKOFF_SECONDS = (2.0, 4.0, 8.0)
+# Nur noch die **Anzahl** der Versuche: die Wartezeit kommt seit dem Wechsel
+# auf `retry_policy` aus `RETRY_BASE_DELAY` und nicht mehr aus dieser Liste.
+# Der Testfixture, der sie auf (0, 0, 0) setzte, um "den Backoff auf null zu
+# setzen", tat deshalb nichts ausser die Anzahl gleich zu lassen — die Suite
+# wartete die echte Leiter 2/4/8 ab. Umbenannt, damit der Name nicht weiter
+# eine Wirkung verspricht, die er nicht hat.
+UVG_VERSUCHE = 4
+
+# Eigener Alias, damit Tests die Wartezeit nullen koennen, ohne `asyncio.sleep`
+# prozessweit zu entschaerfen. `monkeypatch.setattr(<modul>.asyncio, "sleep", ...)`
+# sieht lokal aus, ersetzt `sleep` aber auf dem geteilten Modulobjekt — fuer
+# httpx, respx, pytest-asyncio und jeden anderen Importeur im Prozess.
+# Dieselbe Naht wie in `server.py`.
+_sleep = asyncio.sleep
 
 UVG_CACHE_TTL = timedelta(hours=24)
 # Eine jährlich aktualisierte Quelle braucht keine kurze TTL. 24 h ist bereits
@@ -132,14 +145,14 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
     deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
     attempts = 0
 
-    for attempt in range(len(UVG_BACKOFF_SECONDS) + 1):
+    for attempt in range(UVG_VERSUCHE):
         if attempt:
             delay = retry_policy.compute_delay(attempt, last_error)
             # Eine Wartezeit, die das Budget überdauert, wartet für niemanden:
             # Der Aufrufende hat aufgegeben, bevor sie endet. Dann lieber Schluss.
             if delay >= deadline - time.monotonic():
                 break
-            await asyncio.sleep(delay)
+            await _sleep(delay)
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -188,8 +201,8 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
             f"{retry_policy.RETRY_TOTAL_BUDGET:g}s war schon aufgebraucht (host={host})"
         )
     grund = (
-        f"alle {len(UVG_BACKOFF_SECONDS) + 1} Versuche verbraucht"
-        if attempts >= len(UVG_BACKOFF_SECONDS) + 1
+        f"alle {UVG_VERSUCHE} Versuche verbraucht"
+        if attempts >= UVG_VERSUCHE
         else f"Budget von {retry_policy.RETRY_TOTAL_BUDGET:g}s nach {attempts} aufgebraucht"
     )
     detail = str(last_error) or "keine weitere Angabe"

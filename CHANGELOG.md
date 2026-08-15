@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Die UVG-Testfixture nullte die Wartezeit nicht — sie sah nur so aus.** Sie
+  setzte `UVG_BACKOFF_SECONDS` auf `(0.0, 0.0, 0.0)`, mit dem Docstring
+  «Backoff im Test auf null setzen». Seit dem Wechsel auf `retry_policy` kommt
+  die Wartezeit aber aus `RETRY_BASE_DELAY`; die Liste bestimmte nur noch die
+  **Anzahl** der Versuche — und drei Nullen sind genauso lang wie drei Zahlen.
+  `test_uvg.py` wartete deshalb die echte Leiter 2/4/8 ab: **96 statt 2.9
+  Sekunden** bei identischen 58 Tests. Gefallen ist dabei kein einziger Test.
+  Das Modul legt die Naht jetzt als `_sleep = asyncio.sleep` offen, und die
+  Konstante heisst `UVG_VERSUCHE`, weil sie nur noch das ist.
+
 ### Added
 
+- **Drei Wächter statt einem, weil zwei den Fall nicht gefangen hätten.**
+  `test_beide_pfade_gehen_ueber_ihren_modul_alias` prüft die Module,
+  `test_kein_test_patcht_die_wartezeit_am_fremden_modul` die Tests — beide
+  hätten hier **nichts gemeldet**: es gab keinen Patch am fremden Modul und
+  keinen direkten `asyncio.sleep` im aufgerufenen Pfad, sondern eine Fixture,
+  die eine harmlose Konstante traf. Deshalb misst
+  `test_die_fixture_nullt_die_wartezeit_wirklich` die Wartezeit selbst. Der
+  Abstand trägt: mit wirksamer Fixture Millisekunden, ohne sie elf Sekunden,
+  Schranke bei einer.
+- `test_der_uvg_retry_fragt_die_leiter_ab` lässt den Alias mitschreiben und
+  prüft die Werte gegen 2/4/8 samt Jitter-Bandbreite.
 - **Die kantonale Schicht: vier Kantone publizieren ihre RAV-Zahlen selbst.**
   `seco_get_unemployment_overview(canton=…)` liefert für **TG, FR, ZG und ZH**
   echte Werte statt einer Absage — monatlich für die ersten drei, jährlich nach
