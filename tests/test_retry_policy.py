@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
 import httpx
+import pytest
 
 from seco_labor_mcp import retry_policy
 
@@ -86,3 +87,110 @@ def test_retry_after_jitter_is_one_sided() -> None:
     delays = {retry_policy.compute_delay(1, _retry_after_error("4")) for _ in range(300)}
     assert min(delays) >= 4.0, "never earlier than the source asked for"
     assert max(delays) <= 5.0  # 4 * 1.25
+
+
+# --- Die Naht, und warum sie nicht `asyncio.sleep` ist -----------------------
+
+
+def test_beide_pfade_gehen_ueber_ihren_modul_alias() -> None:
+    """Sonst patchen die Tests eine Naht, die der Code gar nicht benutzt.
+
+    Ruft ein Modul `asyncio.sleep` direkt auf, bleibt jeder Patch am Alias
+    wirkungslos und die Suite wartet die echte Leiter ab. Kein Test faellt
+    dabei — sie wird nur um ein Vielfaches langsamer, und eine laengere
+    Laufzeit ist kein Signal, das jemand liest. Diese Zusicherung macht daraus
+    einen Fehlschlag.
+    """
+    import inspect
+
+    from seco_labor_mcp import server, uvg
+
+    for modul in (server, uvg):
+        quelle = inspect.getsource(modul)
+        assert "await _sleep(" in quelle, f"{modul.__name__} ruft den Modul-Alias nicht auf"
+        assert "await asyncio.sleep(" not in quelle, f"{modul.__name__} umgeht den Alias"
+
+
+def test_kein_test_patcht_die_wartezeit_am_fremden_modul() -> None:
+    """Die andere Haelfte derselben Naht.
+
+    Der Test oben bewacht die Module: sie sollen `_sleep` aufrufen. Diese
+    Zusicherung bewacht die Tests: keiner darf am geteilten `asyncio`-Modul
+    patchen. Ein Patch dort trifft den Retry nicht mehr und entschaerft
+    stattdessen `asyncio.sleep` fuer jeden Importeur im Prozess.
+
+    Gesucht wird der **Patch**, nicht das Wort: `asyncio.sleep` in einem
+    Fliesstext ist eine Erklaerung, in einem `setattr` eine Entschaerfung. Ein
+    Waechter, der beides gleich behandelt, verbietet das Erklaeren mit.
+    """
+    import re
+    from pathlib import Path
+
+    patch = re.compile(r"setattr\([^)]*asyncio[^)]*sleep", re.S)
+    hier = Path(__file__)
+    schuldig = {
+        pfad.name: patch.search(pfad.read_text(encoding="utf-8")).group(0)
+        for pfad in sorted(hier.parent.glob("test_*.py"))
+        if pfad != hier and patch.search(pfad.read_text(encoding="utf-8"))
+    }
+    assert not schuldig, (
+        f"patcht die Wartezeit am geteilten Modul statt am Alias: {schuldig}. "
+        'Richtig ist `monkeypatch.setattr(<modul>, "_sleep", _instant)`.'
+    )
+
+
+async def test_der_uvg_retry_fragt_die_leiter_ab() -> None:
+    """Die dritte Haelfte — und die, die hier gefehlt hat.
+
+    Die beiden Zusicherungen oben haetten den letzten Ausfall **nicht**
+    gefangen: `uvg.py` rief `asyncio.sleep` auf, aber die Fixture patchte
+    `UVG_BACKOFF_SECONDS`. Eine Konstante, die seit dem Wechsel auf
+    `retry_policy` nur noch die Anzahl der Versuche bestimmte — «Backoff auf
+    null» stand im Docstring und traf nichts.
+
+    Gegen diese Klasse hilft nur, den Alias mitschreiben zu lassen: er wird
+    aufgerufen, mit welchen Werten, und wie oft. Bleibt die Liste leer, wartet
+    der Retry woanders.
+    """
+    import httpx as _httpx
+    import respx
+
+    from seco_labor_mcp import uvg
+
+    gefragt: list[float] = []
+
+    async def _mitschreiben(sekunden: float) -> None:
+        gefragt.append(sekunden)
+
+    async def _erlauben(_url: str) -> None:
+        return None
+
+    url = "https://example.test/kaputt.pdf"
+    uvg.uvg_cache_clear()
+    with respx.mock:
+        respx.get(url).mock(return_value=_httpx.Response(503))
+        original_sleep, original_pruefung = uvg._sleep, None
+        from seco_labor_mcp import server as _server
+
+        original_pruefung = _server._validate_external_url
+        uvg._sleep = _mitschreiben
+        _server._validate_external_url = _erlauben
+        try:
+            with pytest.raises(uvg.UvgSourceUnavailableError):
+                await uvg._fetch_bytes(url)
+        finally:
+            uvg._sleep = original_sleep
+            _server._validate_external_url = original_pruefung
+    uvg.uvg_cache_clear()
+
+    assert gefragt, "der Retry hat den Alias nie gefragt — er wartet woanders"
+    assert len(gefragt) == uvg.UVG_VERSUCHE - 1, (
+        f"{len(gefragt)} Wartezeiten bei {uvg.UVG_VERSUCHE} Versuchen"
+    )
+    # Die Leiter 2/4/8 mit Jitter in [0.5x, 1.5x].
+    for i, sekunden in enumerate(gefragt):
+        basis = 2.0 * 2**i
+        assert basis * 0.5 <= sekunden <= basis * 1.5, (
+            f"Wartezeit {i + 1}: {sekunden:.2f}s liegt ausserhalb von "
+            f"[{basis * 0.5}, {basis * 1.5}]"
+        )

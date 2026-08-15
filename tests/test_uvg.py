@@ -105,12 +105,62 @@ KEY_FIGURES_HTML = """<html><body>
 
 @pytest.fixture(autouse=True)
 def _fast_backoff(monkeypatch):
-    """Backoff im Test auf null setzen — geprüft wird die Anzahl Versuche,
-    nicht die Wartezeit."""
-    monkeypatch.setattr(uvg, "UVG_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+    """Wartezeit auf null — und diesmal wirklich.
+
+    Die Vorgängerin setzte `UVG_BACKOFF_SECONDS` auf `(0.0, 0.0, 0.0)`. Das
+    las sich wie «Backoff auf null», hatte aber seit dem Wechsel auf
+    `retry_policy` keine Wirkung mehr: die Wartezeit kommt aus
+    `RETRY_BASE_DELAY`, die Liste bestimmte nur noch die Anzahl der Versuche —
+    und drei Nullen sind genauso lang wie drei Zahlen.
+
+    Gefallen ist dabei kein Test. `test_uvg.py` lief 96 statt 2 Sekunden, weil
+    sieben Tests die echte Leiter 2/4/8 abwarteten. Gepatcht wird jetzt der
+    Modul-Alias `_sleep`, den der Retry auch wirklich aufruft.
+    """
+
+    async def _instant(_seconds):
+        return None
+
+    monkeypatch.setattr(uvg, "_sleep", _instant)
     uvg.uvg_cache_clear()
     yield
     uvg.uvg_cache_clear()
+
+
+async def test_die_fixture_nullt_die_wartezeit_wirklich():
+    """Macht aus der Laufzeit ein Signal.
+
+    Die beiden Waechter in `test_retry_policy.py` decken zwei Faelle ab: das
+    Modul umgeht den Alias, oder ein Test patcht am geteilten `asyncio`. Der
+    Fall, der hier tatsaechlich eingetreten ist, faellt durch beide durch —
+    die Fixture patchte eine **harmlose Konstante** (`UVG_BACKOFF_SECONDS`),
+    die den Backoff laengst nicht mehr steuerte. Kein Patch am fremden Modul,
+    kein direkter `asyncio.sleep`, und trotzdem 96 Sekunden Wartezeit.
+
+    Dagegen hilft nur, die Wartezeit selbst zu messen. Der Abstand ist gross
+    genug, dass die Messung nicht wackelt: mit wirksamer Fixture braucht ein
+    erschoepfter Retry Millisekunden, ohne sie die Leiter 2+4+8 = 14 Sekunden.
+    Eine Sekunde Schranke liegt zwei Groessenordnungen daneben.
+    """
+    import time as _time
+
+    # Die echte UVG-URL statt einer Testdomain: die SSRF-Pruefung loest DNS
+    # wirklich auf, und `example.test` scheitert daran, bevor der Retry
+    # ueberhaupt anlaeuft. Gemessen werden soll die Wartezeit, nicht die Policy.
+    uvg.uvg_cache_clear()
+    with respx.mock:
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(return_value=httpx.Response(503))
+        begonnen = _time.monotonic()
+        with pytest.raises(uvg.UvgSourceUnavailableError):
+            await uvg._fetch_bytes(uvg.UVG_KEY_FIGURES_URL)
+        gebraucht = _time.monotonic() - begonnen
+    uvg.uvg_cache_clear()
+
+    assert gebraucht < 1.0, (
+        f"ein erschoepfter Retry brauchte {gebraucht:.1f}s — die Fixture nullt die "
+        "Wartezeit nicht mehr. Gepatcht gehoert der Modul-Alias `uvg._sleep`, "
+        "nicht eine Konstante, die den Backoff nicht steuert."
+    )
 
 
 # ---------------------------------------------------------------------------
