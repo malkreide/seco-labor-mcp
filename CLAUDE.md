@@ -45,22 +45,18 @@ Ein Codex-Review auf einem PR wird beantwortet oder behoben, nie ignoriert.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — BEFUND: Pin und Deklaration decken sich nicht
+### ruff — 0.16.1, an zwei Stellen gepinnt
 
 `.pre-commit-config.yaml` existiert nicht. Die einzigen beiden Stellen sind:
 
 | Ort | Wert |
 | --- | --- |
-| `.github/workflows/ci.yml` | `ruff==0.16.1` (exakter Pin) |
-| `pyproject.toml`, `[project.optional-dependencies].dev` | `ruff>=0.5.0,<0.17` (Spanne) |
+| `.github/workflows/ci.yml` | `ruff==0.16.1` |
+| `pyproject.toml`, `[project.optional-dependencies].dev` | `ruff==0.16.1` |
 
-`pip install -e ".[dev]"` erfüllt die Spanne mit einer beliebigen Version
-darin — nicht zwingend 0.16.1. Lokal deshalb immer nachziehen, so wie es die
-CI tut:
-
-```
-pip install ruff==0.16.1
-```
+`pip install -e ".[dev]"` liefert damit genau die Version, mit der die CI
+lintet. Beim Anheben beide Stellen zusammen bumpen — sonst gewinnt der
+CI-Schritt und die lokale Version weicht wieder ab.
 
 ### Gate-Befehle (wörtlich aus `ci.yml`)
 
