@@ -7,17 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Die UVG-Testfixture nullte die Wartezeit nicht — sie sah nur so aus.** Sie
-  setzte `UVG_BACKOFF_SECONDS` auf `(0.0, 0.0, 0.0)`, mit dem Docstring
-  «Backoff im Test auf null setzen». Seit dem Wechsel auf `retry_policy` kommt
-  die Wartezeit aber aus `RETRY_BASE_DELAY`; die Liste bestimmte nur noch die
-  **Anzahl** der Versuche — und drei Nullen sind genauso lang wie drei Zahlen.
-  `test_uvg.py` wartete deshalb die echte Leiter 2/4/8 ab: **96 statt 2.9
-  Sekunden** bei identischen 58 Tests. Gefallen ist dabei kein einziger Test.
-  Das Modul legt die Naht jetzt als `_sleep = asyncio.sleep` offen, und die
-  Konstante heisst `UVG_VERSUCHE`, weil sie nur noch das ist.
+## [0.4.0] - 2026-08-15
 
 ### Added
 
@@ -49,20 +39,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scheitert bei jeder Abweichung laut. Das hat sich beim ersten Lauf sofort
   gelohnt — siehe unten.
 
-### Fixed
 
-- **Zürich mischte Kanton, Bezirke und Gemeinden in einer Liste.** «Zürich -
-  ganzer Kanton», «Bezirk Horgen» und «Region Glattal» stehen in der Quelle in
-  derselben Spalte `GEBIET_NAME` wie die Gemeinden. Eine nach Grösse sortierte
-  Liste zeigte damit den Kantonswert als grösste «Gemeinde» — 18'887 vor
-  Zürich mit 6'224. Unterschieden werden sie an `BFS_NR`: Aggregate tragen 0.
-  Der Adapter trennt beides und weist den Kantonswert eigens aus.
-- **Freiburg wurde über die falschen Spaltennamen gelesen.** Die über CKAN
-  verlinkte Ressource trägt **beschriftete** Spalten (`Total chômeurs`), nicht
-  die technischen Namen des Portals (`chomeurs_en_tout`). Beide Formen
-  existieren; gelesen wird jetzt die, auf die die gepinnte Kennung zeigt. Der
-  Schema-Check hat den Unterschied beim ersten Lauf gemeldet, statt eine leere
-  Reihe zu liefern — genau wofür er da ist.
+- **`sources.py`: das gepinnte Register und der Parser der BFS-Jahrestabelle.**
+  Die Reihenbeschriftungen stehen wörtlich darin, statt über Zeilenpositionen
+  geraten zu werden: schiebt das BFS eine Zeile ein, ist eine falsche Zahl das
+  Ergebnis einer Positionsannahme, aber eine benannte Ausnahme das einer
+  Beschriftungssuche. Fehlt eine Reihe, fliegt `TabelleNichtLesbarError` mit
+  den tatsächlich gefundenen Beschriftungen in der Meldung.
+- **Die ILO-Falle ist ausdrücklich abgesichert.** Dieselbe Tabelle führt
+  registrierte Arbeitslose (SECO) und Erwerbslose gemäss ILO (BFS)
+  untereinander; im Jahr 2000 ist die ILO-Zahl das **1.76-fache**. Der Server
+  gibt beide getrennt und beschriftet aus, und je ein Offline- und ein
+  Live-Test hält den Abstand fest.
+- **`_fetch_bytes_with_retry`** mit der Portfolio-Leiter 2s/4s/8s, `Retry-After`
+  und dem 25-Sekunden-Budget. Ohne sie stand der neue Abruf nackt da: ein
+  einziger `client.get` gegen einen Asset-Host, der die TLS-Verhandlung
+  sporadisch abbricht — beim Aufzeichnen der Fixtures zweimal in Folge.
+  Gepatcht wird über den Modul-Alias `_sleep`, nicht über `asyncio.sleep`.
+- **Zwei Aufzeichnungen für den neuen Weg**: `package_show` auf die gepinnte
+  Kennung und die XLS-Ressource, die dort steht. Die Asset-URL wird bewusst
+  nicht zweitgepinnt — sie ändert sich bei jeder Neupublikation.
+- **`openpyxl`** als Abhängigkeit. Die Reihe gibt es nur als XLSX; weder CSV
+  noch SDMX, geprüft am 2026-08-14.
+- **Eine aufgezeichnete Antwort je externem Endpunkt**, in `tests/fixtures/`,
+  mit Herkunft, Aufnahmedatum, Auswahlregel und SHA-256 je Datei in
+  `tests/fixtures/PROVENANCE.md`. Neu aufzeichnen mit
+  `python scripts/record_fixtures.py`, geladen wird über `tests/fixture_data.py`.
+  Aufgezeichnet sind beide CKAN-Aktionen, eine CSV-Ressource, die beiden
+  HTML-Seiten von unfallstatistik.ch und zwei PDFs. Gekürzt ist immer die Zahl
+  der Einträge — Zeilen einer CSV, Seiten eines PDF —, nie ihr Inhalt.
+  Die übrige Suite arbeitet auf *nachgebildeten* Fixturen; `test_uvg.py` sagt
+  das selbst: «Was diese Tests nicht können: eine falsche Grundannahme fangen.»
+  Genau diese Lücke schliessen die Aufzeichnungen — sie haben in diesem Zug
+  zwei Defekte und einen Quellenbefund aufgedeckt.
+- **Befund vom 2026-08-14 in `PROVENANCE.md`: der gepinnte Organisationsfilter
+  trifft niemanden mehr.** `SECO_ORG` gibt es auf opendata.swiss nicht (mehr) —
+  `organization_show` antwortet 404, und in den 176 Einträgen von
+  `organization_list` kommt kein SECO vor. Dieselbe Suche liefert mit `fq`
+  **0** und ohne `fq` mehrere tausend Treffer; beide Antworten sind
+  aufgezeichnet. Wirkung: alle sechs CKAN-gestützten Werkzeuge liefern nichts.
+  Bewusst nicht in diesem Zug behoben — den Filter zu streichen wäre keine
+  Reparatur, sondern eine andere Zusage: die Antworten hiessen weiter
+  «SECO-Datensätze», wären aber Daten des BFS und der Kantone.
+
+
+- **Unfallstatistik UVG (SSUV): drei Tools für Berufsunfälle und
+  Berufskrankheiten** — `seco_get_uvg_overview` (Schlüsselzahlen Gesamtschweiz),
+  `seco_get_uvg_by_branch` (Ergebnisse nach NOGA-2008-Wirtschaftszweig) und
+  `seco_get_uvg_trends` (Zehnjahres-Zeitreihe je Branche). Damit deckt der
+  Server die Risikoseite desselben Arbeitsmarkts ab, den die Arbeitslosen-Tools
+  beschreiben. Tool-Bestand: 12 von maximal 15.
+
+  Herausgeber ist die Koordinationsgruppe KSUV mit der Sammelstelle SSUV c/o
+  Suva — **nicht das SECO**. Das Präfix `seco_` adressiert den Server, nicht die
+  Quelle; das Feld `source` jeder Response nennt den Herausgeber ausdrücklich.
+
+  Architektur C (dump-first), empirisch begründet in `PROBE_REPORT_UVG.md`: Die
+  Quelle hat keine API, ein Link-Scan über alle Datenseiten ergab 165 PDFs und
+  null maschinenlesbare Datendateien.
+
+  **Nutzungsrechte:** Die UVG-Daten sind nicht offen lizenziert («Abdruck ausser
+  für kommerzielle Nutzung mit Quellenangabe gestattet»). Die MIT-Lizenz dieses
+  Repos deckt den Code, nicht die Zahlen. Die Einschränkung steht deshalb in
+  jedem Envelope und nicht bloss im README — ein README wird dem Modell nicht
+  weitergereicht.
 
 ### Changed
 
@@ -123,51 +163,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Kanton Bern» eine national aggregierte Zahl zurückgibt, ist schlechter als
   eines, das nichts zurückgibt.
 
-### Added
-
-- **`sources.py`: das gepinnte Register und der Parser der BFS-Jahrestabelle.**
-  Die Reihenbeschriftungen stehen wörtlich darin, statt über Zeilenpositionen
-  geraten zu werden: schiebt das BFS eine Zeile ein, ist eine falsche Zahl das
-  Ergebnis einer Positionsannahme, aber eine benannte Ausnahme das einer
-  Beschriftungssuche. Fehlt eine Reihe, fliegt `TabelleNichtLesbarError` mit
-  den tatsächlich gefundenen Beschriftungen in der Meldung.
-- **Die ILO-Falle ist ausdrücklich abgesichert.** Dieselbe Tabelle führt
-  registrierte Arbeitslose (SECO) und Erwerbslose gemäss ILO (BFS)
-  untereinander; im Jahr 2000 ist die ILO-Zahl das **1.76-fache**. Der Server
-  gibt beide getrennt und beschriftet aus, und je ein Offline- und ein
-  Live-Test hält den Abstand fest.
-- **`_fetch_bytes_with_retry`** mit der Portfolio-Leiter 2s/4s/8s, `Retry-After`
-  und dem 25-Sekunden-Budget. Ohne sie stand der neue Abruf nackt da: ein
-  einziger `client.get` gegen einen Asset-Host, der die TLS-Verhandlung
-  sporadisch abbricht — beim Aufzeichnen der Fixtures zweimal in Folge.
-  Gepatcht wird über den Modul-Alias `_sleep`, nicht über `asyncio.sleep`.
-- **Zwei Aufzeichnungen für den neuen Weg**: `package_show` auf die gepinnte
-  Kennung und die XLS-Ressource, die dort steht. Die Asset-URL wird bewusst
-  nicht zweitgepinnt — sie ändert sich bei jeder Neupublikation.
-- **`openpyxl`** als Abhängigkeit. Die Reihe gibt es nur als XLSX; weder CSV
-  noch SDMX, geprüft am 2026-08-14.
-- **Eine aufgezeichnete Antwort je externem Endpunkt**, in `tests/fixtures/`,
-  mit Herkunft, Aufnahmedatum, Auswahlregel und SHA-256 je Datei in
-  `tests/fixtures/PROVENANCE.md`. Neu aufzeichnen mit
-  `python scripts/record_fixtures.py`, geladen wird über `tests/fixture_data.py`.
-  Aufgezeichnet sind beide CKAN-Aktionen, eine CSV-Ressource, die beiden
-  HTML-Seiten von unfallstatistik.ch und zwei PDFs. Gekürzt ist immer die Zahl
-  der Einträge — Zeilen einer CSV, Seiten eines PDF —, nie ihr Inhalt.
-  Die übrige Suite arbeitet auf *nachgebildeten* Fixturen; `test_uvg.py` sagt
-  das selbst: «Was diese Tests nicht können: eine falsche Grundannahme fangen.»
-  Genau diese Lücke schliessen die Aufzeichnungen — sie haben in diesem Zug
-  zwei Defekte und einen Quellenbefund aufgedeckt.
-- **Befund vom 2026-08-14 in `PROVENANCE.md`: der gepinnte Organisationsfilter
-  trifft niemanden mehr.** `SECO_ORG` gibt es auf opendata.swiss nicht (mehr) —
-  `organization_show` antwortet 404, und in den 176 Einträgen von
-  `organization_list` kommt kein SECO vor. Dieselbe Suche liefert mit `fq`
-  **0** und ohne `fq` mehrere tausend Treffer; beide Antworten sind
-  aufgezeichnet. Wirkung: alle sechs CKAN-gestützten Werkzeuge liefern nichts.
-  Bewusst nicht in diesem Zug behoben — den Filter zu streichen wäre keine
-  Reparatur, sondern eine andere Zusage: die Antworten hiessen weiter
-  «SECO-Datensätze», wären aber Daten des BFS und der Kantone.
-
 ### Fixed
+
+- **Die UVG-Testfixture nullte die Wartezeit nicht — sie sah nur so aus.** Sie
+  setzte `UVG_BACKOFF_SECONDS` auf `(0.0, 0.0, 0.0)`, mit dem Docstring
+  «Backoff im Test auf null setzen». Seit dem Wechsel auf `retry_policy` kommt
+  die Wartezeit aber aus `RETRY_BASE_DELAY`; die Liste bestimmte nur noch die
+  **Anzahl** der Versuche — und drei Nullen sind genauso lang wie drei Zahlen.
+  `test_uvg.py` wartete deshalb die echte Leiter 2/4/8 ab: **96 statt 2.9
+  Sekunden** bei identischen 58 Tests. Gefallen ist dabei kein einziger Test.
+  Das Modul legt die Naht jetzt als `_sleep = asyncio.sleep` offen, und die
+  Konstante heisst `UVG_VERSUCHE`, weil sie nur noch das ist.
+
+
+- **Zürich mischte Kanton, Bezirke und Gemeinden in einer Liste.** «Zürich -
+  ganzer Kanton», «Bezirk Horgen» und «Region Glattal» stehen in der Quelle in
+  derselben Spalte `GEBIET_NAME` wie die Gemeinden. Eine nach Grösse sortierte
+  Liste zeigte damit den Kantonswert als grösste «Gemeinde» — 18'887 vor
+  Zürich mit 6'224. Unterschieden werden sie an `BFS_NR`: Aggregate tragen 0.
+  Der Adapter trennt beides und weist den Kantonswert eigens aus.
+- **Freiburg wurde über die falschen Spaltennamen gelesen.** Die über CKAN
+  verlinkte Ressource trägt **beschriftete** Spalten (`Total chômeurs`), nicht
+  die technischen Namen des Portals (`chomeurs_en_tout`). Beide Formen
+  existieren; gelesen wird jetzt die, auf die die gepinnte Kennung zeigt. Der
+  Schema-Check hat den Unterschied beim ersten Lauf gemeldet, statt eine leere
+  Reihe zu liefern — genau wofür er da ist.
+
 
 - **`seco_get_dataset` stürzte für jeden Datensatz mit Ressourcen ab.** CKAN
   schickt `last_modified` mit — aber als `null`. Gemessen **165 von 165**
@@ -208,7 +229,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   am 2026-08-07: Acht Server im Portfolio sprechen mit CKAN, sieben defaulteten
   `result`.
 
-### Fixed
 
 - **The retry had six defects, all inherited from the shared template.** Both HTTP paths in this package copied their retry from `reference/retry_backoff.py` in
   [mcp-data-source-probe-skill](https://github.com/malkreide/mcp-data-source-probe-skill),
@@ -260,87 +280,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal cases, the jitter spread, that the cap binds after jittering, and the
   one-sided `Retry-After` jitter.
 
-### Added
-
-- **Unfallstatistik UVG (SSUV): drei Tools für Berufsunfälle und
-  Berufskrankheiten** — `seco_get_uvg_overview` (Schlüsselzahlen Gesamtschweiz),
-  `seco_get_uvg_by_branch` (Ergebnisse nach NOGA-2008-Wirtschaftszweig) und
-  `seco_get_uvg_trends` (Zehnjahres-Zeitreihe je Branche). Damit deckt der
-  Server die Risikoseite desselben Arbeitsmarkts ab, den die Arbeitslosen-Tools
-  beschreiben. Tool-Bestand: 12 von maximal 15.
-
-  Herausgeber ist die Koordinationsgruppe KSUV mit der Sammelstelle SSUV c/o
-  Suva — **nicht das SECO**. Das Präfix `seco_` adressiert den Server, nicht die
-  Quelle; das Feld `source` jeder Response nennt den Herausgeber ausdrücklich.
-
-  Architektur C (dump-first), empirisch begründet in `PROBE_REPORT_UVG.md`: Die
-  Quelle hat keine API, ein Link-Scan über alle Datenseiten ergab 165 PDFs und
-  null maschinenlesbare Datendateien.
-
-  **Nutzungsrechte:** Die UVG-Daten sind nicht offen lizenziert («Abdruck ausser
-  für kommerzielle Nutzung mit Quellenangabe gestattet»). Die MIT-Lizenz dieses
-  Repos deckt den Code, nicht die Zahlen. Die Einschränkung steht deshalb in
-  jedem Envelope und nicht bloss im README — ein README wird dem Modell nicht
-  weitergereicht.
-
-### Known findings
-
-Vier Eigenheiten der Quelle, die jede für sich zu einem stillen Datenfehler
-geführt hätten. Sie stehen hier, damit derselbe Griff beim nächsten
-PDF-basierten Portfolio-Server nicht neu erarbeitet werden muss.
-
-- **Zwei unvereinbare Zahlenformate in derselben Quelle.** Die Jahresausgabe
-  trennt Tausender mit einem gewöhnlichen Leerzeichen und Dezimalstellen mit
-  Komma (`1 097 154`, `137,5`), die Branchen-PDF mit Apostroph und Punkt
-  (`1'057`, `4.25`).
-
-  Der Leerzeichen-Trenner ist der gefährliche Fall, weil er dasselbe Zeichen ist,
-  das auch Spalten trennt: `166 534 234` ist als `166534234` genauso lesbar wie
-  als `166 534 | 234`. Ein `split()` liefert dann plausible Integers und kein
-  Fehlersignal — ein Parser, der nicht abstürzt, sondern lügt. Aus dem Textlayer
-  allein ist das nicht auflösbar; die Zahlen kommen deshalb aus dem
-  Layout-Extraktionsmodus, wo die Spaltenabstände des Satzes erhalten bleiben.
-  Die Trennschwelle ist gemessen, nicht geraten: Lücken innerhalb von Zahlen
-  reichen bis 10 Leerzeichen, die kleinste Lücke zwischen zwei Spalten misst 113.
-
-  *Schweizer Statistik-PDFs trennen Tausender mit demselben Zeichen wie Spalten —
-  wer beides gleich behandelt, bekommt aus 1 097 154 Vollbeschäftigten drei
-  Zahlen und keine Warnung.*
-
-- **Der Stern ist Information.** Werte erscheinen als `162*` oder `*145`. Laut
-  `Beschrieb_Branchen_d.pdf` markiert er eine statistisch signifikante
-  Veränderung zum Vorjahr. Ihn wegzuwerfen hiesse, jede Bewegung gleich
-  bedeutsam aussehen zu lassen; er bleibt als Feld `significant` je Datenpunkt
-  erhalten.
-
-- **Die Indexseiten der Quelle sind unzuverlässiger als ihre Dateien.**
-  `branchen_d.htm` nennt «Letzte Aktualisierung: 07.11.2023», während die
-  verlinkten PDFs `Version: 2.01.00 / 09.01.2026` tragen. `jahr_d.htm` verlinkt
-  noch `Ts25.pdf`, obwohl `Ts26.pdf` seit Juni 2026 online ist. Folglich wird
-  `source_freshness` aus der Datei abgeleitet und die aktuelle Ausgabe durch
-  direktes Proben von `Ts{YY}.pdf` ermittelt, nicht durch Scrapen des Index.
-
-- **Die Quelle rundet gegen sich selbst.** In der Ausgabe 2025 ergeben die
-  gedruckten Sektorzeilen der Tabelle 1.2 zusammen 4 469 213 bei einem
-  gedruckten Total von 4 469 212 — im Rohtext bestätigt, also eine Differenz der
-  Publikation, nicht der Extraktion. Die Summenprobe prüft deshalb auf Toleranz
-  statt auf exakte Gleichheit: Rundung ist 1, ein gebrochenes Layout sind
-  Grössenordnungen.
-
-
-- **Versions-Badge in beiden READMEs** (`0.3.4`). Bis jetzt war die Version im
-  README nur über den dynamischen PyPI-Badge sichtbar, und `C8` meldete auf
-  INFO-Ebene, dass es keinen Anker zum Abgleichen gibt — «nichts gefunden» soll
-  nicht wie «alles in Ordnung» aussehen.
-
-  Ein hartkodierter Badge ist nur dann eine Verbesserung, wenn ihn etwas bewacht
-  — sonst führt er genau die Drift ein, gegen die der Check existiert. Hier
-  bewacht ihn `scripts/check_version_sync.py`, das bereits in der CI läuft: es
-  nimmt den Badge jetzt in beiden Sprachfassungen mit auf. Gegengeprüft, dass
-  die Bewachung auch greift — mit einem auf `0.9.9` verstellten Badge meldet der
-  Check `DRIFT` und beendet sich mit Exit 1.
-
-### Fixed
 
 - **Laufzeit-Abhängigkeiten mit Obergrenzen versehen** (`fastmcp<4`, `httpx<1`,
   `pydantic<3`). Alle drei standen nach oben offen, und für alle drei liegt der
@@ -398,6 +337,63 @@ PDF-basierten Portfolio-Server nicht neu erarbeitet werden muss.
   | `month`-Bounds-Test trifft `year` | bestanden | fällt durch |
   | Feldname `response_formt` vertippt | bestanden | fällt durch |
   | Feldname `quer` vertippt | bestanden | fällt durch |
+
+### Known findings
+
+Vier Eigenheiten der Quelle, die jede für sich zu einem stillen Datenfehler
+geführt hätten. Sie stehen hier, damit derselbe Griff beim nächsten
+PDF-basierten Portfolio-Server nicht neu erarbeitet werden muss.
+
+- **Zwei unvereinbare Zahlenformate in derselben Quelle.** Die Jahresausgabe
+  trennt Tausender mit einem gewöhnlichen Leerzeichen und Dezimalstellen mit
+  Komma (`1 097 154`, `137,5`), die Branchen-PDF mit Apostroph und Punkt
+  (`1'057`, `4.25`).
+
+  Der Leerzeichen-Trenner ist der gefährliche Fall, weil er dasselbe Zeichen ist,
+  das auch Spalten trennt: `166 534 234` ist als `166534234` genauso lesbar wie
+  als `166 534 | 234`. Ein `split()` liefert dann plausible Integers und kein
+  Fehlersignal — ein Parser, der nicht abstürzt, sondern lügt. Aus dem Textlayer
+  allein ist das nicht auflösbar; die Zahlen kommen deshalb aus dem
+  Layout-Extraktionsmodus, wo die Spaltenabstände des Satzes erhalten bleiben.
+  Die Trennschwelle ist gemessen, nicht geraten: Lücken innerhalb von Zahlen
+  reichen bis 10 Leerzeichen, die kleinste Lücke zwischen zwei Spalten misst 113.
+
+  *Schweizer Statistik-PDFs trennen Tausender mit demselben Zeichen wie Spalten —
+  wer beides gleich behandelt, bekommt aus 1 097 154 Vollbeschäftigten drei
+  Zahlen und keine Warnung.*
+
+- **Der Stern ist Information.** Werte erscheinen als `162*` oder `*145`. Laut
+  `Beschrieb_Branchen_d.pdf` markiert er eine statistisch signifikante
+  Veränderung zum Vorjahr. Ihn wegzuwerfen hiesse, jede Bewegung gleich
+  bedeutsam aussehen zu lassen; er bleibt als Feld `significant` je Datenpunkt
+  erhalten.
+
+- **Die Indexseiten der Quelle sind unzuverlässiger als ihre Dateien.**
+  `branchen_d.htm` nennt «Letzte Aktualisierung: 07.11.2023», während die
+  verlinkten PDFs `Version: 2.01.00 / 09.01.2026` tragen. `jahr_d.htm` verlinkt
+  noch `Ts25.pdf`, obwohl `Ts26.pdf` seit Juni 2026 online ist. Folglich wird
+  `source_freshness` aus der Datei abgeleitet und die aktuelle Ausgabe durch
+  direktes Proben von `Ts{YY}.pdf` ermittelt, nicht durch Scrapen des Index.
+
+- **Die Quelle rundet gegen sich selbst.** In der Ausgabe 2025 ergeben die
+  gedruckten Sektorzeilen der Tabelle 1.2 zusammen 4 469 213 bei einem
+  gedruckten Total von 4 469 212 — im Rohtext bestätigt, also eine Differenz der
+  Publikation, nicht der Extraktion. Die Summenprobe prüft deshalb auf Toleranz
+  statt auf exakte Gleichheit: Rundung ist 1, ein gebrochenes Layout sind
+  Grössenordnungen.
+
+
+- **Versions-Badge in beiden READMEs** (`0.3.4`). Bis jetzt war die Version im
+  README nur über den dynamischen PyPI-Badge sichtbar, und `C8` meldete auf
+  INFO-Ebene, dass es keinen Anker zum Abgleichen gibt — «nichts gefunden» soll
+  nicht wie «alles in Ordnung» aussehen.
+
+  Ein hartkodierter Badge ist nur dann eine Verbesserung, wenn ihn etwas bewacht
+  — sonst führt er genau die Drift ein, gegen die der Check existiert. Hier
+  bewacht ihn `scripts/check_version_sync.py`, das bereits in der CI läuft: es
+  nimmt den Badge jetzt in beiden Sprachfassungen mit auf. Gegengeprüft, dass
+  die Bewachung auch greift — mit einem auf `0.9.9` verstellten Badge meldet der
+  Check `DRIFT` und beendet sich mit Exit 1.
 
 ## [0.3.4] - 2026-07-30
 
