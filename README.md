@@ -109,9 +109,30 @@ The three series do **not** measure the same thing: in 2000 the ILO figure is
 1.76× the registered one. The server reports them separately and labelled, and
 never converts one into the other.
 
-**Not available at present:** monthly values, cantonal breakdowns, youth
-unemployment (zero datasets portal-wide) and unemployment by occupational
-group. The affected tools say so and return **no** substitute figure. These
+### The cantonal layer: four cantons, four schemas
+
+There is no national monthly series — but **four cantons publish their own
+RAV figures**, each in its own portal with its own column names. For those,
+`seco_get_unemployment_overview(canton=…)` returns real values:
+
+| Canton | Granularity | from | Level | Note |
+|---|---|---|---|---|
+| **TG** | monthly | 2016-01 | canton | only series **by age class** → youth unemployment as a count |
+| **FR** | monthly | 2004-01 | canton **and Switzerland** | carries the national monthly figure as a comparison row |
+| **ZG** | monthly | 1993-01 | canton | youth unemployment only as a **rate**, not a count |
+| **ZH** | **annual** | 1991 | **municipality** | no monthly values; districts and regions sit in the same column as municipalities and are separated out |
+
+**The other 22 cantons get a named refusal** — no figure from another canton
+and no national aggregate. Partial coverage that feels complete is worse than
+none.
+
+The four series are **not comparable with each other** and do not add up to a
+Swiss figure: different time axes, different geographic levels, and in ZG's
+case a rate rather than a count.
+
+**Still not available:** unemployment by occupational group, open positions as
+a national series, and youth unemployment for Switzerland or for 24 of the 26
+cantons. The affected tools say so and return **no** substitute figure. These
 values exist interactively on [amstat.ch](https://www.amstat.ch/v2/amstat_de.html),
 which offers no interface a server could call.
 
@@ -123,8 +144,8 @@ which offers no interface a server could call.
 |------|-------------|--------------|
 | `seco_search_datasets` | Search labour-market datasets on opendata.swiss (publisher shown per hit) | Discovery |
 | `seco_get_dataset` | Full metadata + download links for a dataset | Data access |
-| `seco_get_unemployment_overview` | Registered unemployed, national, annual series from 2000 | Labor market overview |
-| `seco_get_youth_unemployment` | Youth unemployment (15–24) — **no data source at present**, see below | 🎓 Berufswahlberatung |
+| `seco_get_unemployment_overview` | Registered unemployed: national annual, cantonal for TG/FR/ZG/ZH | Labor market overview |
+| `seco_get_youth_unemployment` | Youth unemployment (15–24) — **TG** (count) and **ZG** (rate) only | 🎓 Berufswahlberatung |
 | `seco_get_job_seekers` | Registered job seekers, national, annual series from 2000 | Training demand |
 | `seco_get_open_positions` | Open positions — **no national series available** | Sector analysis |
 | `seco_get_unemployment_by_occupation` | Breakdown by Berufshauptgruppe — **no machine-readable source** | 🎓 Vocational guidance |

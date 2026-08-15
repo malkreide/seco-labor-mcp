@@ -7,8 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Die kantonale Schicht: vier Kantone publizieren ihre RAV-Zahlen selbst.**
+  `seco_get_unemployment_overview(canton=…)` liefert für **TG, FR, ZG und ZH**
+  echte Werte statt einer Absage — monatlich für die ersten drei, jährlich nach
+  Gemeinde für Zürich. Gepinnt sind wieder die CKAN-Kennungen, nie die
+  Portal-URLs der Kantone; ein Live-Test prüft jede gegen die Quelle.
+- **Jugendarbeitslosigkeit, in den zwei Kantonen, die sie führen.** TG liefert
+  eine **Anzahl** (Altersklasse 15–24, monatlich seit 2016), ZG eine **Quote**
+  (seit 1993). Beide stehen so in der Antwort, wie der Kanton sie publiziert —
+  eine Umrechnung bräuchte die Bezugsgrösse, die keiner der beiden mitliefert.
+  Zürich publiziert Arbeitslose, aber nicht nach Alter; das ist ein dritter
+  Fall und wird auch als solcher beantwortet.
+- **Vier Kantone, vier Adapter.** Jedes Statistikamt publiziert mit eigenen
+  Spaltennamen, eigener Zeitachse und eigenem Begriffsumfang. Ein gemeinsamer
+  Parser müsste raten; stattdessen liest jeder Adapter genau ein Schema und
+  scheitert bei jeder Abweichung laut. Das hat sich beim ersten Lauf sofort
+  gelohnt — siehe unten.
+
+### Fixed
+
+- **Zürich mischte Kanton, Bezirke und Gemeinden in einer Liste.** «Zürich -
+  ganzer Kanton», «Bezirk Horgen» und «Region Glattal» stehen in der Quelle in
+  derselben Spalte `GEBIET_NAME` wie die Gemeinden. Eine nach Grösse sortierte
+  Liste zeigte damit den Kantonswert als grösste «Gemeinde» — 18'887 vor
+  Zürich mit 6'224. Unterschieden werden sie an `BFS_NR`: Aggregate tragen 0.
+  Der Adapter trennt beides und weist den Kantonswert eigens aus.
+- **Freiburg wurde über die falschen Spaltennamen gelesen.** Die über CKAN
+  verlinkte Ressource trägt **beschriftete** Spalten (`Total chômeurs`), nicht
+  die technischen Namen des Portals (`chomeurs_en_tout`). Beide Formen
+  existieren; gelesen wird jetzt die, auf die die gepinnte Kennung zeigt. Der
+  Schema-Check hat den Unterschied beim ersten Lauf gemeldet, statt eine leere
+  Reihe zu liefern — genau wofür er da ist.
+
 ### Changed
 
+- **Befund aus #28 korrigiert: es gibt doch eine maschinenlesbare monatliche
+  Schweizer Reihe.** Sie steht nicht in einem Datensatz *über* die Schweiz,
+  sondern als Vergleichszeile `Suisse / Schweiz` in der **Freiburger** Reihe —
+  monatlich seit 2004. Die Aussage «keine monatliche Quelle» galt für die
+  Suche nach nationalen Datensätzen und war insofern zu weit gefasst. Sie ist
+  in README, Werkzeugtexten und Nachweis nachgezogen.
 - **Der Server liest die SECO-Zahlen jetzt über eine gepinnte Kennung statt über
   einen Organisationsfilter.** Der Filter auf
   `organization:staatssekretariat-fur-wirtschaft-seco` war ein Namensabgleich,

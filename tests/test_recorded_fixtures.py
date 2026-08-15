@@ -26,8 +26,10 @@ import pytest
 import respx
 from fixture_data import fixture_bytes, fixture_json, provenance, recorded_names
 
-from seco_labor_mcp import sources, uvg
+from seco_labor_mcp import kantone, sources, uvg
+from seco_labor_mcp import server as _server_mod
 from seco_labor_mcp.server import (
+    CANTON_CODES,
     CKAN_BASE,
     DatasetDetailsInput,
     DatasetSearchInput,
@@ -442,15 +444,18 @@ async def test_die_uebersicht_erfindet_keine_kantonale_zahl():
 
     Ein Warnhinweis neben einer Zahl verliert gegen die Zahl: gelesen wird die
     Quote, nicht der Hinweis. Eine Absage kann man nicht falsch zitieren.
+
+    Geprüft an Bern: seit der kantonalen Schicht liefert Zürich echte Werte,
+    und der Test hätte sonst still aufgehört, eine Absage zu prüfen.
     """
     _mock_jahresreihe()
     roh = await seco_get_unemployment_overview(
-        UnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
+        UnemploymentInput(canton="BE", response_format=ResponseFormat.JSON)
     )
     daten = json.loads(roh)
     assert daten["data_available"] is False
     assert "amstat.ch" in " ".join(daten["where"])
-    text = await seco_get_unemployment_overview(UnemploymentInput(canton="ZH"))
+    text = await seco_get_unemployment_overview(UnemploymentInput(canton="BE"))
     assert "%" not in text, f"eine Quote in einer Absage ist eine Zahl zu viel: {text[:200]}"
 
 
@@ -478,7 +483,7 @@ async def test_die_jugendarbeitslosigkeit_nennt_keine_beispielzahl():
     # Pruefdatum sind erlaubt — sie datieren den Befund, statt ihn zu ersetzen.
     assert not re.search(r"\d[\.\d]*\s?%", text), f"Prozentwert in der Absage: {text[:300]}"
     assert not re.search(r"\d['’]\d", text), f"Tausenderzahl in der Absage: {text[:300]}"
-    assert "Keine Zahlen verfügbar" in text
+    assert "keine zahlen verfügbar" in text.lower()
     daten = json.loads(
         await seco_get_youth_unemployment(
             YouthUnemploymentInput(response_format=ResponseFormat.JSON)
@@ -507,3 +512,269 @@ async def test_eine_formaenderung_der_tabelle_wird_gemeldet():
     # macht — dieselbe Regel wie bei `UpstreamSchemaError`.
     with pytest.raises(sources.TabelleNichtLesbarError, match="nicht lesbar"):
         await seco_get_unemployment_overview(UnemploymentInput(response_format=ResponseFormat.JSON))
+
+
+# --------------------------------------------------------------------------
+# Die kantonale Schicht: vier Kantone, vier Schemata
+# --------------------------------------------------------------------------
+
+KANTONS_FIXTURES = {
+    "TG": "kanton_tg.csv",
+    "FR": "kanton_fr.csv",
+    "ZG": "kanton_zg.csv",
+    "ZH": "kanton_zh.csv",
+}
+
+
+def _kantonsdaten(kuerzel: str) -> dict:
+    reihe = kantone.KANTONE[kuerzel]
+    payload = fixture_bytes(KANTONS_FIXTURES[kuerzel])
+    if kuerzel == "ZG":
+        return kantone.parse_zg(payload, reihe, fixture_bytes("kanton_zg_quoten.csv"))
+    return kantone.PARSER[kuerzel](payload, reihe)
+
+
+@pytest.mark.parametrize("kuerzel", sorted(KANTONS_FIXTURES))
+def test_jeder_kanton_hat_eine_aufzeichnung(kuerzel):
+    """Ein gepinnter Kanton ohne Aufzeichnung ist eine ungeprüfte Zusage."""
+    assert KANTONS_FIXTURES[kuerzel] in recorded_names()
+    assert fixture_bytes(KANTONS_FIXTURES[kuerzel])
+
+
+@pytest.mark.parametrize("kuerzel", sorted(KANTONS_FIXTURES))
+def test_jeder_adapter_liest_seine_aufzeichnung(kuerzel):
+    """Vier Schemata, vier Adapter — jeder gegen die echte Antwort seines Kantons."""
+    daten = _kantonsdaten(kuerzel)
+    assert daten["kanton"] == kuerzel
+    assert daten["granularitaet"] == kantone.KANTONE[kuerzel].granularitaet
+    inhalt = next(v for k, v in daten.items() if k.startswith("nach_"))
+    assert inhalt, f"{kuerzel}: der Adapter liefert keine Datenpunkte"
+
+
+@pytest.mark.parametrize("kuerzel", sorted(KANTONS_FIXTURES))
+def test_ein_umbenanntes_feld_wird_gemeldet(kuerzel):
+    """Ohne diese Prüfung würde ein Schemawechsel zu null Treffern statt zu einem Fehler.
+
+    Genau das ist beim ersten Lauf passiert: die über CKAN verlinkte Freiburger
+    Ressource trägt beschriftete Spalten (`Total chômeurs`), nicht die
+    technischen Namen des Portals. Der Adapter hat es gemeldet, statt eine
+    leere Reihe zu liefern.
+    """
+    reihe = kantone.KANTONE[kuerzel]
+    roh = fixture_bytes(KANTONS_FIXTURES[kuerzel]).decode("utf-8-sig")
+    zeilen = roh.split("\n")
+    zeilen[0] = zeilen[0].replace(reihe.felder[0], "umbenannt", 1)
+    kaputt = "\n".join(zeilen).encode("utf-8")
+    with pytest.raises(kantone.KantonsReiheNichtLesbarError, match="Spalten fehlen"):
+        if kuerzel == "ZG":
+            kantone.parse_zg(kaputt, reihe, None)
+        else:
+            kantone.PARSER[kuerzel](kaputt, reihe)
+
+
+def test_zuerich_trennt_gemeinden_von_bezirken():
+    """Der Fund, den erst die echte Antwort gezeigt hat.
+
+    «Zürich - ganzer Kanton», «Bezirk Horgen» und «Region Glattal» stehen in
+    derselben Spalte wie die Gemeinden. Eine nach Grösse sortierte Liste
+    stellt dann den Kantonswert an die Spitze der «grössten Gemeinden».
+    Unterschieden werden sie an `BFS_NR`: Aggregate tragen 0.
+    """
+    daten = _kantonsdaten("ZH")
+    jahr = sorted(daten["nach_gemeinde"])[-1]
+    gemeinden = daten["nach_gemeinde"][jahr]
+    aggregate = daten["aggregate"][jahr]
+    assert any("ganzer Kanton" in g for g in aggregate), "der Kantonswert gehört zu den Aggregaten"
+    assert not any("Bezirk" in g or "Region" in g for g in gemeinden), (
+        f"Aggregate unter den Gemeinden: {[g for g in gemeinden if 'Bezirk' in g]}"
+    )
+    kantonswert = next(w for g, w in aggregate.items() if "ganzer Kanton" in g)
+    groesste = max(gemeinden.values())
+    assert kantonswert > groesste, (
+        "der Kantonswert muss über der grössten Gemeinde liegen — sonst ist die "
+        "Trennung nicht die, für die sie gehalten wird"
+    )
+
+
+def test_freiburg_fuehrt_die_schweizer_zeile_mit():
+    """Der zweite Fund: eine kantonale Quelle trägt die Monatszahl der Schweiz.
+
+    PR #28 hielt fest, es gebe keine maschinenlesbare monatliche Reihe für die
+    Schweiz. Das stimmt für Datensätze *über* die Schweiz; die Freiburger Reihe
+    führt sie als Vergleichszeile mit. Der Befund gehört korrigiert, nicht
+    stehengelassen.
+    """
+    daten = _kantonsdaten("FR")
+    periode = sorted(daten["nach_gebiet"])[-1]
+    werte = daten["nach_gebiet"][periode]
+    assert set(werte) == {"FR", "CH"}
+    assert werte["CH"]["arbeitslose"] > werte["FR"]["arbeitslose"] * 10, (
+        "die Schweizer Zeile soll deutlich über der kantonalen liegen"
+    )
+    assert werte["FR"]["stellensuchende"] > werte["FR"]["arbeitslose"], (
+        "Stellensuchende schliessen die Arbeitslosen ein"
+    )
+
+
+def test_zug_fuehrt_die_jugend_nur_als_quote():
+    """Eine Quote ist keine Anzahl — und Zug liefert nur die Quote."""
+    daten = _kantonsdaten("ZG")
+    werte = daten["nach_periode"][sorted(daten["nach_periode"])[-1]]
+    assert "Jugendarbeitslosenquote" in werte
+    assert werte["Jugendarbeitslosenquote"] < 100, "eine Quote in Prozent, keine Anzahl"
+    assert werte["Arbeitslose"] > 100, "die Anzahl steht daneben und ist eine andere Grösse"
+
+
+def test_thurgau_fuehrt_die_jugend_als_anzahl():
+    """Und Thurgau nur die Anzahl — die beiden Kantone sind nicht vergleichbar."""
+    daten = _kantonsdaten("TG")
+    periode = sorted(daten["nach_alter"])[-1]
+    jung = daten["nach_alter"][periode]["15-24 Jahre"]
+    assert jung["Registrierte Arbeitslose"] > 1, "eine Anzahl, keine Quote"
+    assert jung["Registrierte Stellensuchende"] > jung["Registrierte Arbeitslose"]
+
+
+def test_das_register_nennt_genau_die_kantone_mit_daten():
+    """Die Teilabdeckung steht im Register, nicht in einem Kommentar."""
+    assert set(kantone.KANTONE) == set(KANTONS_FIXTURES)
+    assert len(kantone.KANTONE) < 26, "vier von 26 — keine gesamtschweizerische Abdeckung"
+    for kuerzel, reihe in kantone.KANTONE.items():
+        assert kuerzel in CANTON_CODES
+        assert reihe.granularitaet in ("monatlich", "jaehrlich")
+        assert reihe.herausgeber and reihe.ab
+
+
+# --------------------------------------------------------------------------
+# Die Werkzeuge über der kantonalen Schicht
+# --------------------------------------------------------------------------
+
+
+def _mock_kanton(kuerzel: str) -> None:
+    """`package_show` auf die gepinnte Kennung, dann die CSV-Ressource."""
+    reihe = kantone.KANTONE[kuerzel]
+    url = f"https://example.test/{kuerzel}.csv"
+    paket = {
+        "success": True,
+        "result": {
+            "id": reihe.ckan_id,
+            "name": reihe.slug,
+            "metadata_modified": "2026-08-15T00:00:00",
+            "resources": [{"format": "CSV", "url": url}],
+        },
+    }
+    routen = [(reihe.ckan_id, paket, url, KANTONS_FIXTURES[kuerzel])]
+    if reihe.zweite_ckan_id:
+        url2 = f"https://example.test/{kuerzel}_quoten.csv"
+        routen.append(
+            (
+                reihe.zweite_ckan_id,
+                {
+                    "success": True,
+                    "result": {
+                        "id": reihe.zweite_ckan_id,
+                        "name": reihe.zweiter_slug,
+                        "metadata_modified": "2026-08-15T00:00:00",
+                        "resources": [{"format": "CSV", "url": url2}],
+                    },
+                },
+                url2,
+                "kanton_zg_quoten.csv",
+            )
+        )
+    for ckan_id, antwort, res_url, fixture in routen:
+        respx.get(
+            url__startswith=f"{CKAN_BASE}/package_show", params__contains={"id": ckan_id}
+        ).mock(return_value=httpx.Response(200, json=antwort))
+        respx.get(res_url).mock(return_value=httpx.Response(200, content=fixture_bytes(fixture)))
+
+
+@pytest.mark.parametrize("kuerzel", sorted(KANTONS_FIXTURES))
+@respx.mock
+async def test_die_uebersicht_liefert_kantonale_zahlen(kuerzel, monkeypatch):
+    """Wo eine Reihe existiert, kommt eine Zahl heraus — mit ihrer Herkunft."""
+
+    async def _erlauben(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
+    _mock_kanton(kuerzel)
+    daten = json.loads(
+        await seco_get_unemployment_overview(
+            UnemploymentInput(canton=kuerzel, response_format=ResponseFormat.JSON)
+        )
+    )
+    assert daten["canton"] == kuerzel
+    assert daten["granularity"] == (
+        "annual" if kantone.KANTONE[kuerzel].granularitaet == "jaehrlich" else "monthly"
+    )
+    assert kantone.KANTONE[kuerzel].herausgeber in daten["source"]
+    assert "SECO" in daten["source"], "die Datenquelle bleibt SECO, auch wenn ein Kanton publiziert"
+    warnung = daten["not_comparable_across_cantons"]
+    assert "addiert" in warnung and "keine Schweizer Zahl" in warnung, warnung
+
+
+@respx.mock
+async def test_ein_kanton_ohne_reihe_bekommt_weiter_eine_absage():
+    """22 Kantone publizieren nicht — und bekommen keine fremde Zahl."""
+    daten = json.loads(
+        await seco_get_unemployment_overview(
+            UnemploymentInput(canton="BE", response_format=ResponseFormat.JSON)
+        )
+    )
+    assert daten["data_available"] is False
+    assert set(daten["cantons_with_data"]) == set(kantone.KANTONE)
+    text = await seco_get_unemployment_overview(UnemploymentInput(canton="BE"))
+    assert "keine Daten" in text
+    assert not re.search(r"\d['’]\d", text), f"Zahl in der Absage: {text[:300]}"
+
+
+@respx.mock
+async def test_die_jugendzahl_kommt_nur_aus_den_zwei_kantonen(monkeypatch):
+    """TG als Anzahl, ZG als Quote — und beide nicht als dasselbe Feld."""
+
+    async def _erlauben(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
+    _mock_kanton("TG")
+    tg = json.loads(
+        await seco_get_youth_unemployment(
+            YouthUnemploymentInput(canton="TG", response_format=ResponseFormat.JSON)
+        )
+    )
+    assert tg["measure"] == "count"
+    assert tg["youth_15_24"]["Registrierte Arbeitslose"] > 1
+    assert "youth_unemployment_rate_pct" not in tg
+
+
+@respx.mock
+async def test_zug_liefert_eine_quote_und_nennt_sie_so(monkeypatch):
+    async def _erlauben(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
+    _mock_kanton("ZG")
+    zg = json.loads(
+        await seco_get_youth_unemployment(
+            YouthUnemploymentInput(canton="ZG", response_format=ResponseFormat.JSON)
+        )
+    )
+    assert zg["measure"] == "rate_pct"
+    assert zg["youth_unemployment_rate_pct"] < 100
+    assert "youth_15_24" not in zg, "eine Quote darf nicht im Anzahl-Feld landen"
+
+
+async def test_ein_kanton_mit_reihe_aber_ohne_alter_sagt_das_auch():
+    """Zürich publiziert Arbeitslose, aber nicht nach Alter — ein dritter Fall.
+
+    Ihn wie «keine Quelle» zu beantworten schickte jemanden zu amstat.ch, der
+    zwei Zeilen weiter eine kantonale Reihe bekommen hätte.
+    """
+    daten = json.loads(
+        await seco_get_youth_unemployment(
+            YouthUnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
+        )
+    )
+    assert daten["data_available"] is False
+    assert daten["available_from_this_canton"] == "seco_get_unemployment_overview"
+    assert set(daten["cantons_with_youth_data"]) == {"TG", "ZG"}

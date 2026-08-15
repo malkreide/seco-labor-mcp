@@ -80,7 +80,7 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 - **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** vollstaendig; Datensatz 'arbeitslose-anz' — ein beliebiger Datensatz, an dem die Form einer `package_show`-Antwort belegt ist. Die gepinnte Jahresreihe steht eigens weiter unten
 - **Groesse:** 7063 B
-- **SHA-256:** `88c006f402a07863358c3eaec33c16e9375db54e40da45365742d95c01b2265d`
+- **SHA-256:** `77a8d8521cdb17f10988632431852d207310a8760c1932816b5a64fbb5ce74e4`
 
 ## `ckan_package_show_jahresreihe.json`
 
@@ -97,6 +97,46 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 - **Auswahl:** vollstaendig; Blatt T3.3.0.1 mit den drei Reihen ['erwerbslose_ilo', 'registrierte_arbeitslose', 'registrierte_stellensuchende'], Jahre 2000-2025. Ungekuerzt, weil die ganze Mappe 17 kB misst
 - **Groesse:** 17600 B
 - **SHA-256:** `619ef4aff31943c86d168b70ded23a64fe486e311b7440fb54079a29de02c77b`
+
+## `kanton_fr.csv`
+
+- **Quelle:** `https://opendata.fr.ch/api/explore/v2.1/catalog/datasets/03_03_chomage_mensuel/exports/csv?use_labels=true`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** Kopfzeile unveraendert, keine Spalte entfernt; 6 von 542 Datenzeilen: die juengsten Perioden vollstaendig. Amt für Statistik und Daten Freiburg, monatlich ab 2004-01
+- **Groesse:** 687 B (Quelle: 542 Datenzeilen)
+- **SHA-256:** `7a2338efb429a18c94465ae3e7e53cb762312ded704eea0dbdfb0d9b86d7a30e`
+
+## `kanton_tg.csv`
+
+- **Quelle:** `https://data.tg.ch/api/v2/catalog/datasets/djs-awa-6/exports/csv?use_labels=true`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** Kopfzeile unveraendert, keine Spalte entfernt; 1240 von 52608 Datenzeilen: die juengsten Perioden vollstaendig. Kanton Thurgau, monatlich ab 2016-01
+- **Groesse:** 137059 B (Quelle: 52608 Datenzeilen)
+- **SHA-256:** `78c6eb8b8994e166c8ece70ea8535124a8210d43bc9fb2867a6ebe8ef252cb81`
+
+## `kanton_zg.csv`
+
+- **Quelle:** `https://data.zg.ch/store/1/resource/100`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** Kopfzeile unveraendert, keine Spalte entfernt; 9 von 1209 Datenzeilen: die juengsten Perioden vollstaendig. Kanton Zug, monatlich ab 1993-01
+- **Groesse:** 300 B (Quelle: 1209 Datenzeilen)
+- **SHA-256:** `1939cc477c1d55e1b8d4eda6504b18cf20325c37b59b091f99824d367865862c`
+
+## `kanton_zg_quoten.csv`
+
+- **Quelle:** `https://data.zg.ch/store/1/resource/106`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** Kopfzeile unveraendert; 6 von 806 Datenzeilen. Zweiter Datensatz desselben Kantons: arbeitslosenquote
+- **Groesse:** 234 B (Quelle: 806 Datenzeilen)
+- **SHA-256:** `ca700616289ebc6506e6daca620f24bf5871d41e260d10c6c222556da50622f4`
+
+## `kanton_zh.csv`
+
+- **Quelle:** `https://www.web.statistik.zh.ch/ogd/data/KANTON_ZUERICH_107.csv`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** Kopfzeile unveraendert, keine Spalte entfernt; 554 von 6582 Datenzeilen: die juengsten Perioden vollstaendig. Statistisches Amt Kanton Zürich, jaehrlich ab 1991
+- **Groesse:** 65344 B (Quelle: 6582 Datenzeilen)
+- **SHA-256:** `6b12a770f674f85bd7faf81c0804cf17ebae0e7f3f43ce28c8eb255a287ef39e`
 
 ## `uvg_schluesselzahlen.html`
 

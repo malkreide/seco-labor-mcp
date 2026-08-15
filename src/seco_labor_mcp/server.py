@@ -37,7 +37,7 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, retry_policy, sources
+from . import __version__, kantone, retry_policy, sources
 from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 # ---------------------------------------------------------------------------
@@ -565,6 +565,50 @@ async def _fetch_bytes_with_retry(url: str) -> bytes:
     ) from last_error
 
 
+async def _erste_csv_url(ckan_id: str, slug: str) -> tuple[str, str]:
+    """Die aktuelle CSV-Ressource eines gepinnten Datensatzes und sein Änderungsdatum.
+
+    Wie beim nationalen Weg wird nur die **Kennung** gepinnt, nie die
+    Ressourcen-URL: die Kantone hängen ihre Dateien an Portal-URLs, die einen
+    Portalumzug nicht überleben. Die CKAN-Kennung überlebt ihn.
+    """
+    paket = await _ckan_get_dataset(ckan_id)
+    ds = _ckan_result(paket, "package_show")
+    treffer = next(
+        (r for r in ds.get("resources", []) if (r.get("format") or "").upper() == "CSV"),
+        None,
+    )
+    if treffer is None or not treffer.get("url"):
+        raise UpstreamSchemaError(
+            f"Datensatz {slug!r} führt keine CSV-Ressource mehr. Vorhandene Formate: "
+            f"{sorted({r.get('format') for r in ds.get('resources', [])})}"
+        )
+    return treffer["url"], (ds.get("metadata_modified") or "")[:10]
+
+
+async def _kantonsreihe(kanton: str) -> dict[str, Any]:
+    """Holt und liest die gepinnte Reihe eines Kantons.
+
+    Jeder Kanton hat seinen eigenen Adapter, weil jeder sein eigenes Schema
+    publiziert. Ein gemeinsamer Parser müsste raten, und Raten heisst hier:
+    eine Spalte, die anders heisst, wird zu null Treffern statt zu einem
+    Fehler.
+    """
+    reihe = kantone.KANTONE[kanton]
+    url, geaendert = await _erste_csv_url(reihe.ckan_id, reihe.slug)
+    payload = await _fetch_bytes_with_retry(url)
+    if kanton == "ZG":
+        quoten_url, _ = await _erste_csv_url(reihe.zweite_ckan_id, reihe.zweiter_slug)
+        daten = kantone.parse_zg(payload, reihe, await _fetch_bytes_with_retry(quoten_url))
+    else:
+        daten = kantone.PARSER[kanton](payload, reihe)
+    daten["resource_url"] = url
+    daten["dataset_modified"] = geaendert
+    daten["herkunft"] = kantone.herkunftszeile(reihe)
+    daten["hinweis"] = reihe.hinweis
+    return daten
+
+
 async def _bfs_jahresreihe() -> dict[str, Any]:
     """Holt die gepinnte BFS-Tabelle und liest die drei SECO-Reihen daraus.
 
@@ -920,7 +964,12 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
             f"Valid codes: {', '.join(sorted(CANTON_CODES.keys()))}"
         )
     if canton_filter:
-        return _keine_kantonale_reihe(canton_filter, params.response_format)
+        if canton_filter not in kantone.KANTONE:
+            return _keine_kantonale_reihe(canton_filter, params.response_format)
+        try:
+            return await _kantonale_uebersicht(canton_filter, params)
+        except Exception as e:
+            return _to_execution_error(e)
 
     try:
         daten = await _bfs_jahresreihe()
@@ -1014,6 +1063,9 @@ def _keine_kantonale_reihe(kanton: str, format_: ResponseFormat) -> str:
     Hinweis. Eine Absage kann man nicht falsch zitieren.
     """
     name = CANTON_CODES.get(kanton, kanton)
+    mit_reihe = ", ".join(
+        f"{k} ({kantone.KANTONE[k].granularitaet})" for k in sorted(kantone.KANTONE)
+    )
     quellen = (
         "https://www.amstat.ch/v2/amstat_de.html",
         "https://www.arbeit.swiss/de/informationszentrum/arbeitsmarktstatistik-schweiz",
@@ -1025,10 +1077,19 @@ def _keine_kantonale_reihe(kanton: str, format_: ResponseFormat) -> str:
                 "canton_name": name,
                 "data_available": False,
                 "reason": (
-                    "Für kantonale Arbeitslosenzahlen gibt es auf opendata.swiss keine "
-                    "maschinenlesbare Quelle (geprüft 2026-08-14). Die nationale "
-                    "Jahresreihe steht ohne `canton` zur Verfügung."
+                    f"Der Kanton {kanton} publiziert seine Arbeitslosenzahlen nicht "
+                    "maschinenlesbar (geprüft 2026-08-15 über den Gesamtbestand von "
+                    "opendata.swiss). Vier Kantone tun es, 22 nicht."
                 ),
+                "cantons_with_data": {
+                    k: {
+                        "granularity": r.granularitaet,
+                        "from": r.ab,
+                        "level": r.gebietsebene,
+                        "publisher": r.herausgeber,
+                    }
+                    for k, r in sorted(kantone.KANTONE.items())
+                },
                 "where": list(quellen),
             },
             ensure_ascii=False,
@@ -1037,20 +1098,280 @@ def _keine_kantonale_reihe(kanton: str, format_: ResponseFormat) -> str:
     return "\n".join(
         [
             f"## Kanton {name} ({kanton}) — keine Daten\n",
-            "Für **kantonale** Arbeitslosenzahlen gibt es auf opendata.swiss keine",
-            "maschinenlesbare Quelle (geprüft 2026-08-14). Dieses Werkzeug gibt",
-            "deshalb keine Zahl aus — eine national aggregierte Zahl an dieser Stelle",
-            "wäre als kantonale zu lesen und damit falsch.",
+            f"Der Kanton {name} publiziert seine Arbeitslosenzahlen nicht",
+            "maschinenlesbar (geprüft 2026-08-15 über den Gesamtbestand von",
+            "opendata.swiss). Dieses Werkzeug gibt deshalb keine Zahl aus — eine",
+            "Zahl aus einem anderen Kanton oder eine national aggregierte an dieser",
+            "Stelle wäre als Zahl dieses Kantons zu lesen und damit falsch.",
+            "",
+            f"**Vier Kantone publizieren:** {mit_reihe}.",
+            "Für sie liefert dieses Werkzeug echte Werte.",
             "",
             "Die nationale Jahresreihe liefert dieses Werkzeug ohne `canton`.",
             "",
-            "Kantonale Werte gibt es interaktiv auf",
-            f"[amstat.ch]({quellen[0]}) und im Monatsbericht auf",
-            f"[arbeit.swiss]({quellen[1]}).",
+            f"Für alle übrigen Kantone: [amstat.ch]({quellen[0]}) zeigt sie",
+            f"interaktiv, der [Monatsbericht]({quellen[1]}) als PDF.",
+        ]
+    )
+
+
+# Die beiden Kantone, deren Reihe die Altersklasse 15–24 fuehrt. Getrennt von
+# `kantone.KANTONE`, weil «publiziert Arbeitslosenzahlen» und «schluesselt nach
+# Alter auf» zwei verschiedene Zusagen sind: FR und ZH tun das erste, nicht das
+# zweite.
+JUGEND_KANTONE = ("TG", "ZG")
+
+
+async def _kantonale_jugend(kanton: str, params: YouthUnemploymentInput) -> str:
+    """Jugendarbeitslosigkeit für die zwei Kantone, die sie führen.
+
+    TG liefert eine **Anzahl**, ZG eine **Quote**. Beide Formen stehen so in
+    der Antwort, wie der Kanton sie publiziert; eine Umrechnung bräuchte die
+    Bezugsgrösse, die keiner der beiden mitliefert.
+    """
+    daten = await _kantonsreihe(kanton)
+    name = CANTON_CODES.get(kanton, kanton)
+
+    if kanton == "TG":
+        perioden = sorted(daten["nach_alter"])
+        p = perioden[-1]
+        jung = daten["nach_alter"][p].get("15-24 Jahre", {})
+        alle = {
+            k: sum(w.get(k, 0.0) for w in daten["nach_alter"][p].values())
+            for k in ("Registrierte Arbeitslose", "Registrierte Stellensuchende")
+        }
+        anteil = {k: (jung.get(k, 0.0) / alle[k] * 100) if alle.get(k) else None for k in alle}
+        nutzlast = {
+            "canton": kanton,
+            "period": p,
+            "measure": "count",
+            "youth_15_24": {k: jung.get(k) for k in alle},
+            "canton_total": alle,
+            "youth_share_pct": anteil,
+            "series_from": perioden[0],
+        }
+        markdown = [
+            f"## Jugendarbeitslosigkeit Kanton {name} — {p}\n",
+            "*Anzahl, Altersklasse 15–24 Jahre*\n",
+            "| Kennzahl | 15–24 | Kanton gesamt | Anteil |",
+            "|---|---|---|---|",
+            *[
+                f"| {k} | {_fmt_number(jung.get(k))} | {_fmt_number(alle[k])} | "
+                + (f"{anteil[k]:.1f} % |" if anteil[k] is not None else "– |")
+                for k in sorted(alle)
+            ],
             "",
-            "Einzelne Kantone publizieren eigene Reihen auf ihren Portalen; mit",
-            "`seco_search_datasets` nach dem Kantonsnamen suchen. Herausgeber und",
-            "Erhebungsweise unterscheiden sich dort je Kanton.",
+            f"Reihe verfügbar: {perioden[0]} bis {p}.",
+        ]
+    else:  # ZG
+        perioden = sorted(daten["nach_periode"])
+        p = perioden[-1]
+        werte = daten["nach_periode"][p]
+        jugendquote = werte.get("Jugendarbeitslosenquote")
+        gesamtquote = werte.get("Arbeitslosenquote")
+        nutzlast = {
+            "canton": kanton,
+            "period": p,
+            "measure": "rate_pct",
+            "youth_unemployment_rate_pct": jugendquote,
+            "overall_unemployment_rate_pct": gesamtquote,
+            "note": (
+                "Zug publiziert die Jugendarbeitslosigkeit als Quote, nicht als "
+                "Anzahl. Ohne die Bezugsgrösse lässt sie sich nicht in eine "
+                "Anzahl umrechnen."
+            ),
+            "series_from": perioden[0],
+        }
+        markdown = [
+            f"## Jugendarbeitslosigkeit Kanton {name} — {p}\n",
+            "*Quote in Prozent — dieser Kanton publiziert keine Anzahl*\n",
+            "| Kennzahl | Wert |",
+            "|---|---|",
+            f"| Jugendarbeitslosenquote | {jugendquote if jugendquote is not None else '–'} % |",
+            f"| Arbeitslosenquote gesamt | {gesamtquote if gesamtquote is not None else '–'} % |",
+            "",
+            "> Eine Quote ist keine Anzahl. Ohne die Bezugsgrösse, die diese Quelle",
+            "> nicht mitliefert, lässt sie sich nicht umrechnen.",
+            "",
+            f"Reihe verfügbar: {perioden[0]} bis {p}.",
+        ]
+
+    nutzlast["source"] = daten["herkunft"]
+    nutzlast["data_url"] = daten["resource_url"]
+    nutzlast["national_not_available"] = (
+        "Für die Schweiz als Ganzes gibt es keine maschinenlesbare Reihe (geprüft 2026-08-14)."
+    )
+    if params.response_format == ResponseFormat.JSON:
+        return json.dumps(nutzlast, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            *markdown,
+            "",
+            "Für die **Schweiz als Ganzes** gibt es keine maschinenlesbare Reihe;",
+            "diese Zahl gilt nur für diesen Kanton.",
+            "",
+            "---",
+            daten["herkunft"],
+        ]
+    )
+
+
+async def _kantonale_uebersicht(kanton: str, params: UnemploymentInput) -> str:
+    """Die Antwort für einen Kanton, der seine Reihe publiziert.
+
+    Jede Antwort nennt **Granularität und Gebietsebene**, weil sie sich je
+    Kanton unterscheiden: TG, FR und ZG liefern Monatswerte für den Kanton, ZH
+    Jahreswerte je Gemeinde. Ohne diese Angabe läse sich eine Zürcher
+    Gemeindezahl wie ein Kantonsmonat.
+    """
+    reihe = kantone.KANTONE[kanton]
+    daten = await _kantonsreihe(kanton)
+    name = CANTON_CODES.get(kanton, kanton)
+
+    if kanton == "ZH":
+        jahre = sorted(daten["nach_gemeinde"])
+        jahr = str(params.year) if params.year else jahre[-1]
+        if jahr not in daten["nach_gemeinde"]:
+            jahr = jahre[-1]
+        gemeinden = daten["nach_gemeinde"][jahr]
+        aggregate = daten["aggregate"].get(jahr, {})
+        # Der Kantonswert steht in derselben Spalte wie die Gemeinden und wird
+        # deshalb eigens herausgehoben — in einer nach Groesse sortierten
+        # Gemeindeliste stuende er sonst als groesste «Gemeinde» obenan.
+        kantonswert = next(
+            (w for g, w in aggregate.items() if "ganzer Kanton" in g),
+            None,
+        )
+        groesste = sorted(gemeinden.items(), key=lambda kv: -kv[1])[:10]
+        kopf = {
+            "canton": kanton,
+            "granularity": "annual",
+            "level": "Gemeinde",
+            "period": jahr,
+            "cantonal_total": kantonswert,
+            "municipalities": len(gemeinden),
+            "largest_municipalities": dict(groesste),
+            "aggregates_available": sorted(aggregate),
+        }
+        markdown = [
+            f"## Arbeitslose Kanton {name} — {jahr}\n",
+            f"*Jahreswerte, {len(gemeinden)} Gemeinden. Keine Monatswerte in dieser Quelle.*\n",
+            f"**Kanton gesamt: {_fmt_number(kantonswert)}**\n" if kantonswert is not None else "",
+            "| Gemeinde | Arbeitslose |",
+            "|---|---|",
+            *[f"| {g} | {_fmt_number(w)} |" for g, w in groesste],
+            "",
+            "> Bezirke und Regionen stehen in der Quelle in derselben Spalte wie die",
+            "> Gemeinden; sie sind hier herausgerechnet. Eine Liste, die sie mischt,",
+            "> zeigt den Kanton als grösste Gemeinde.",
+            "",
+            f"Reihe verfügbar: {jahre[0]}–{jahre[-1]}.",
+        ]
+    elif kanton == "FR":
+        perioden = sorted(daten["nach_gebiet"])
+        p = perioden[-1]
+        werte = daten["nach_gebiet"][p]
+        kopf = {
+            "canton": kanton,
+            "granularity": "monthly",
+            "level": "Kanton",
+            "period": p,
+            "cantonal": werte.get("FR"),
+            "national_in_same_source": werte.get("CH"),
+        }
+        fr, ch = werte.get("FR") or {}, werte.get("CH") or {}
+        markdown = [
+            f"## Arbeitslose Kanton {name} — {p}\n",
+            "| Reihe | Kanton | Schweiz |",
+            "|---|---|---|",
+            f"| Registrierte Arbeitslose | {_fmt_number(fr.get('arbeitslose'))} | "
+            f"{_fmt_number(ch.get('arbeitslose'))} |",
+            f"| Registrierte Stellensuchende | {_fmt_number(fr.get('stellensuchende'))} | "
+            f"{_fmt_number(ch.get('stellensuchende'))} |",
+            f"| Arbeitslosenquote | {fr.get('quote'):.2f} % | {ch.get('quote'):.2f} % |"
+            if fr.get("quote") is not None and ch.get("quote") is not None
+            else "| Arbeitslosenquote | – | – |",
+            "",
+            "> Die Schweizer Spalte führt **diese kantonale Quelle** selbst mit. Sie ist",
+            "> der einzige maschinenlesbare Weg zu monatlichen Schweizer Zahlen, den die",
+            "> Prüfung vom 2026-08-15 gefunden hat.",
+            "",
+            f"Reihe verfügbar: {perioden[0]} bis {perioden[-1]}.",
+        ]
+    elif kanton == "ZG":
+        perioden = sorted(daten["nach_periode"])
+        p = perioden[-1]
+        werte = daten["nach_periode"][p]
+        kopf = {
+            "canton": kanton,
+            "granularity": "monthly",
+            "level": "Kanton",
+            "period": p,
+            "values": werte,
+        }
+        markdown = [
+            f"## Arbeitslose Kanton {name} — {p}\n",
+            "| Kennzahl | Wert |",
+            "|---|---|",
+            *[
+                f"| {k} | {v:,.1f} |".replace(",", "'").replace(".0 |", " |")
+                for k, v in sorted(werte.items())
+            ],
+            "",
+            "> Die Jugendarbeitslosigkeit steht hier nur als **Quote** zur Verfügung,",
+            "> nicht als Anzahl — die beiden sind nicht ineinander umrechenbar.",
+            "",
+            f"Reihe verfügbar: {perioden[0]} bis {perioden[-1]}.",
+        ]
+    else:  # TG
+        perioden = sorted(daten["nach_alter"])
+        p = perioden[-1]
+        nach_alter = daten["nach_alter"][p]
+        summe: dict[str, float] = {}
+        for werte in nach_alter.values():
+            for kennzahl, wert in werte.items():
+                summe[kennzahl] = summe.get(kennzahl, 0.0) + wert
+        kopf = {
+            "canton": kanton,
+            "granularity": "monthly",
+            "level": "Kanton",
+            "period": p,
+            "total": summe,
+            "by_age": nach_alter,
+        }
+        markdown = [
+            f"## Arbeitslose Kanton {name} — {p}\n",
+            "| Kennzahl | Kanton | davon 15–24 |",
+            "|---|---|---|",
+            *[
+                f"| {k} | {_fmt_number(summe[k])} | "
+                f"{_fmt_number(nach_alter.get('15-24 Jahre', {}).get(k))} |"
+                for k in sorted(summe)
+                if k.startswith("Registrierte")
+            ],
+            "",
+            f"Reihe verfügbar: {perioden[0]} bis {perioden[-1]}, nach Altersklasse.",
+        ]
+
+    kopf["source"] = daten["herkunft"]
+    kopf["data_url"] = daten["resource_url"]
+    kopf["dataset_modified"] = daten["dataset_modified"]
+    kopf["note"] = reihe.hinweis
+    kopf["not_comparable_across_cantons"] = (
+        "Die vier kantonalen Reihen haben verschiedene Zeitachsen und "
+        "Gebietsebenen. Sie ergeben addiert keine Schweizer Zahl."
+    )
+    if params.response_format == ResponseFormat.JSON:
+        return json.dumps(kopf, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            *markdown,
+            "",
+            f"> {reihe.hinweis}" if reihe.hinweis else "",
+            "",
+            "---",
+            daten["herkunft"],
+            f"Datensatz zuletzt geändert: {daten['dataset_modified']}",
         ]
     )
 
@@ -1071,14 +1392,22 @@ def _keine_kantonale_reihe(kanton: str, format_: ResponseFormat) -> str:
     },
 )
 async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
-    """Jugendarbeitslosigkeit (15–24) — zurzeit ohne maschinenlesbare Quelle.
+    """Jugendarbeitslosigkeit (15–24) — national keine Quelle, in zwei Kantonen schon.
 
-    **Dieses Werkzeug liefert keine Zahlen.** Eine Suche über den ganzen
-    Bestand von opendata.swiss nach «Jugendarbeitslosigkeit» ergab am
-    2026-08-14 **null** Datensätze; auch die Umschreibungen nach Alter und
-    Altersgruppen führen zu keiner Reihe, die 15–24-Jährige als registrierte
-    Arbeitslose ausweist. SECO erhebt die Zahl und zeigt sie auf amstat.ch,
-    veröffentlicht sie aber nirgends maschinenlesbar.
+    **National liefert dieses Werkzeug keine Zahlen.** Eine Suche über den
+    ganzen Bestand von opendata.swiss nach «Jugendarbeitslosigkeit» ergab am
+    2026-08-14 null Datensätze. SECO erhebt die Zahl und zeigt sie auf
+    amstat.ch, veröffentlicht sie aber nicht als Datei.
+
+    **Zwei Kantone publizieren sie**, und zwar in unterschiedlicher Form:
+
+    * **TG** als *Anzahl* registrierter Arbeitsloser und Stellensuchender der
+      Altersklasse 15–24, monatlich seit 2016.
+    * **ZG** als *Quote*, monatlich seit 1993.
+
+    Eine Anzahl und eine Quote sind nicht ineinander umrechenbar, solange die
+    Bezugsgrösse fehlt. Das Werkzeug gibt deshalb aus, was der jeweilige Kanton
+    führt, und beschriftet es — statt beides zu einer Zahl zu verschmelzen.
 
     Was es stattdessen gibt: die Einordnung, die eine Zahl brauchbar macht —
     das saisonale Muster und was daraus für die Bildungsplanung folgt. Das ist
@@ -1106,6 +1435,50 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     canton_name = CANTON_CODES.get(canton_filter, canton_filter) if canton_filter else None
     scope = f"Kanton {canton_name} ({canton_filter})" if canton_name else "Schweiz national"
 
+    if canton_filter in JUGEND_KANTONE:
+        try:
+            return await _kantonale_jugend(canton_filter, params)
+        except Exception as e:
+            return _to_execution_error(e)
+
+    if canton_filter in kantone.KANTONE:
+        # Dieser Kanton publiziert Arbeitslosenzahlen, aber nicht nach Alter.
+        # Das ist ein anderer Fall als «keine Quelle» und wird auch anders
+        # beantwortet — sonst schickt die Antwort jemanden zu amstat.ch, der
+        # zwei Zeilen weiter oben eine kantonale Reihe bekommen hätte.
+        reihe = kantone.KANTONE[canton_filter]
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(
+                {
+                    "canton": canton_filter,
+                    "data_available": False,
+                    "reason": (
+                        f"{reihe.herausgeber} publiziert Arbeitslosenzahlen, aber "
+                        "keine Aufschlüsselung nach Altersklasse."
+                    ),
+                    "available_from_this_canton": "seco_get_unemployment_overview",
+                    "cantons_with_youth_data": {
+                        k: ("Anzahl" if k == "TG" else "Quote") for k in sorted(JUGEND_KANTONE)
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        return "\n".join(
+            [
+                f"## Jugendarbeitslosigkeit — {scope}\n",
+                f"**{reihe.herausgeber} publiziert Arbeitslosenzahlen, aber keine",
+                "Aufschlüsselung nach Altersklasse.** Dieses Werkzeug gibt deshalb für",
+                f"{canton_name} keine Jugendzahl aus.",
+                "",
+                f"Was es für {canton_name} gibt: die allgemeine Reihe über",
+                "`seco_get_unemployment_overview`.",
+                "",
+                "Nach Alter aufgeschlüsselt publizieren nur `TG` (Anzahl) und",
+                "`ZG` (Quote).",
+            ]
+        )
+
     quellen = {
         "amstat": "https://www.amstat.ch/v2/amstat_de.html",
         "monatsbericht": (
@@ -1124,11 +1497,14 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
                 "scope": scope,
                 "data_available": False,
                 "reason": (
-                    "Keine maschinenlesbare Quelle für registrierte Jugendarbeitslose "
-                    "(15–24) auf opendata.swiss — Suche über den Gesamtbestand am "
+                    "Keine **nationale** maschinenlesbare Quelle für registrierte "
+                    "Jugendarbeitslose (15–24) — Suche über den Gesamtbestand am "
                     "2026-08-14: 0 Datensätze. SECO erhebt die Zahl und zeigt sie "
                     "interaktiv auf amstat.ch."
                 ),
+                "cantons_with_data": {
+                    k: ("Anzahl" if k == "TG" else "Quote") for k in sorted(JUGEND_KANTONE)
+                },
                 "where": quellen,
                 "seasonal_pattern_qualitative": saison,
                 "note": (
@@ -1143,11 +1519,15 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     return "\n".join(
         [
             f"## Jugendarbeitslosigkeit (15–24) — {scope}\n",
-            "**Keine Zahlen verfügbar.** Für registrierte Jugendarbeitslose gibt es",
-            "auf opendata.swiss keine maschinenlesbare Quelle: die Suche über den",
-            "Gesamtbestand ergab am 2026-08-14 null Datensätze. SECO erhebt die Zahl",
-            "und zeigt sie interaktiv auf amstat.ch, publiziert sie aber nicht als",
-            "Datei.",
+            "**National keine Zahlen verfügbar.** Für registrierte",
+            "Jugendarbeitslose gibt es auf opendata.swiss keine gesamtschweizerische",
+            "maschinenlesbare Quelle: die Suche über den Gesamtbestand ergab am",
+            "2026-08-14 null Datensätze. SECO erhebt die Zahl und zeigt sie",
+            "interaktiv auf amstat.ch, publiziert sie aber nicht als Datei.",
+            "",
+            "**Zwei Kantone publizieren sie:** `TG` als Anzahl (monatlich seit 2016),",
+            "`ZG` als Quote (monatlich seit 1993). Mit `canton='TG'` oder",
+            "`canton='ZG'` liefert dieses Werkzeug echte Werte.",
             "",
             "Dieses Werkzeug gibt deshalb keine Beispiel- oder Referenzwerte aus. Eine",
             "als Beispiel eingeführte Zahl wird als Zahl zitiert.",

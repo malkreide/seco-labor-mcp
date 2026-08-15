@@ -11,13 +11,14 @@ CI excludes this file via `pytest -m "not live"`.
 
 import pytest
 
-from seco_labor_mcp import sources, uvg
+from seco_labor_mcp import kantone, sources, uvg
 from seco_labor_mcp.server import (
     CANTON_CODES,
     DatasetSearchInput,
     YouthUnemploymentInput,
     _bfs_jahresreihe,
     _ckan_get_dataset,
+    _kantonsreihe,
     seco_get_youth_unemployment,
     seco_list_cantons,
     seco_search_datasets,
@@ -59,6 +60,37 @@ class TestLiveAPI:
             assert formate & {"XLS", "XLSX"}, (
                 f"{datensatz.slug} führt keine Tabellenressource mehr: {sorted(formate)}"
             )
+
+    @pytest.mark.asyncio
+    async def test_die_gepinnten_kantone_existieren_noch(self):
+        """Vier Kantone, vier Kennungen — jede gegen die echte Quelle.
+
+        Derselbe Mechanismus wie fuer die nationale Reihe: verschwindet ein
+        kantonaler Datensatz oder verliert er seine CSV-Ressource, ist das hier
+        ein roter Test und nicht eine Antwort, die still auf die Absage
+        zurueckfaellt.
+        """
+        for kuerzel, reihe in sorted(kantone.KANTONE.items()):
+            paket = await _ckan_get_dataset(reihe.ckan_id)
+            assert paket.get("success") is True, f"{kuerzel}: CKAN meldet keinen Erfolg"
+            ds = paket["result"]
+            assert ds["id"] == reihe.ckan_id
+            formate = {(r.get("format") or "").upper() for r in ds.get("resources", [])}
+            assert "CSV" in formate, f"{kuerzel} fuehrt keine CSV mehr: {sorted(formate)}"
+
+    @pytest.mark.asyncio
+    async def test_jeder_kantonsadapter_liest_die_echte_antwort(self):
+        """Die Aufzeichnung belegt die Form von einem Tag; nur live faellt ein Wechsel auf.
+
+        Ein Kanton, der eine Spalte umbenennt, laesst hier
+        `KantonsReiheNichtLesbarError` fliegen — die Fehlermeldung nennt die
+        vorhandenen Spalten, was das Nachziehen zu einer Minute Arbeit macht.
+        """
+        for kuerzel in sorted(kantone.KANTONE):
+            daten = await _kantonsreihe(kuerzel)
+            assert daten["kanton"] == kuerzel
+            inhalt = next(v for k, v in daten.items() if k.startswith("nach_"))
+            assert inhalt, f"{kuerzel}: keine Datenpunkte"
 
     @pytest.mark.asyncio
     async def test_die_jahresreihe_stimmt_noch_mit_der_quelle_ueberein(self):
