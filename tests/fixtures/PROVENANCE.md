@@ -2,7 +2,7 @@
 
 **Erzeugt von `scripts/record_fixtures.py`. Nicht von Hand pflegen.**
 
-Aufgezeichnet am **2026-08-14** von den Quellen dieses Servers:
+Aufgezeichnet am **2026-08-15** von den Quellen dieses Servers:
 `https://opendata.swiss/api/3/action`, `https://www.unfallstatistik.ch` und der CSV-Ressource des aufgezeichneten
 Datensatzes.
 
@@ -30,7 +30,7 @@ Diese Organisation gibt es auf opendata.swiss nicht (mehr):
 | Abfrage | Treffer |
 |---|---|
 | `package_search` mit `fq=organization:staatssekretariat-fur-wirtschaft-seco` | **0** |
-| dieselbe Suche ohne `fq` | 7811 |
+| dieselbe Suche ohne `fq` | 7810 |
 
 `organization_show?id=staatssekretariat-fur-wirtschaft-seco` antwortet mit **404 Not found**, und in
 den 176 Eintraegen von `organization_list` kommt kein SECO vor —
@@ -61,7 +61,7 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 ## `ckan_package_search.json`
 
 - **Quelle:** `https://ckan.opendata.swiss/api/3/action/package_search?q=arbeitslose+kantone&fq=organization%3Astaatssekretariat-fur-wirtschaft-seco&rows=10&sort=score+desc%2C+metadata_modified+desc`
-- **Aufgezeichnet:** 2026-08-14
+- **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** vollstaendig; der Aufruf des Clients Wort fuer Wort — Suche nach 'arbeitslose kantone', gefiltert auf `organization:staatssekretariat-fur-wirtschaft-seco`. Ergebnis: **0 Treffer** (siehe Befund oben)
 - **Groesse:** 219 B
 - **SHA-256:** `1108f2a30e029490c6a1553c4a1f6e3e9d714b647cd7e17be6c11c24f6279f1d`
@@ -69,31 +69,39 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 ## `ckan_package_search_ohne_organisation.json`
 
 - **Quelle:** `https://ckan.opendata.swiss/api/3/action/package_search?q=arbeitslose+kantone&rows=10&sort=score+desc%2C+metadata_modified+desc`
-- **Aufgezeichnet:** 2026-08-14
-- **Auswahl:** vollstaendig; dieselbe Suche ohne `fq`. Ergebnis: **7811 Treffer**. Belegt, dass der Endpunkt antwortet und der Filter die Ursache ist — nicht die Suche und nicht das Netz
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** vollstaendig; dieselbe Suche ohne `fq`. Ergebnis: **7810 Treffer**. Belegt, dass der Endpunkt antwortet und der Filter die Ursache ist — nicht die Suche und nicht das Netz
 - **Groesse:** 124625 B
-- **SHA-256:** `92b6e5fbb32b4d5dad88f9dd0152869a21005e46e06817642ee975733311f4b6`
+- **SHA-256:** `e6a7c74e21114fdafc0d89c3b1bf57e106deb11c654b5c76ef9b6e1b6ebd2bc5`
 
 ## `ckan_package_show.json`
 
 - **Quelle:** `https://ckan.opendata.swiss/api/3/action/package_show?id=arbeitslose-anz`
-- **Aufgezeichnet:** 2026-08-14
-- **Auswahl:** vollstaendig; Datensatz 'arbeitslose-anz' — gewaehlt, weil er eine CSV-Ressource fuehrt und damit den zweiten Weg des Servers belegt: von der Ressourcenliste in die Datei
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** vollstaendig; Datensatz 'arbeitslose-anz' — ein beliebiger Datensatz, an dem die Form einer `package_show`-Antwort belegt ist. Die gepinnte Jahresreihe steht eigens weiter unten
 - **Groesse:** 7063 B
 - **SHA-256:** `88c006f402a07863358c3eaec33c16e9375db54e40da45365742d95c01b2265d`
 
-## `ckan_ressource.csv`
+## `ckan_package_show_jahresreihe.json`
 
-- **Quelle:** `https://www.web.statistik.zh.ch/ogd/data/KANTON_ZUERICH_107.csv`
-- **Aufgezeichnet:** 2026-08-14
-- **Auswahl:** Kopfzeile unveraendert, keine Spalte entfernt; 68 von 6582 Datenzeilen: die **vollstaendigen** Zeitreihen von 'Aeugst a.A.' und 'Zürich - ganzer Kanton'. Die Datei beginnt mit einer einzigen Gemeinde im aeltesten Jahr — eine Kopfauswahl belegte weder die Spanne noch das juengste Jahr
-- **Groesse:** 8600 B (Quelle: 6583 Zeilen)
-- **SHA-256:** `b5b959ba1015f6e31b09bc1754f3022db7c46c9fa6526dc8cd0e6f0a48b18ceb`
+- **Quelle:** `https://ckan.opendata.swiss/api/3/action/package_show?id=13f60916-3df1-495a-9b30-4e9b1daea562`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** vollstaendig; die gepinnte Kennung aus `sources.py` (erwerbslose-gemass-ilo-registrierte-arbeitslose-und-registrierte-stellensuchende4)
+- **Groesse:** 17116 B
+- **SHA-256:** `fc2b5f03e8031c752316795ea2dfc8ecf7c2f676364621b27f143d61631853fc`
+
+## `bfs_jahresreihe.xlsx`
+
+- **Quelle:** `https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346864/master`
+- **Aufgezeichnet:** 2026-08-15
+- **Auswahl:** vollstaendig; Blatt T3.3.0.1 mit den drei Reihen ['erwerbslose_ilo', 'registrierte_arbeitslose', 'registrierte_stellensuchende'], Jahre 2000-2025. Ungekuerzt, weil die ganze Mappe 17 kB misst
+- **Groesse:** 17600 B
+- **SHA-256:** `619ef4aff31943c86d168b70ded23a64fe486e311b7440fb54079a29de02c77b`
 
 ## `uvg_schluesselzahlen.html`
 
 - **Quelle:** `https://www.unfallstatistik.ch/d/neuza/schluesselzahlen_d.htm`
-- **Aufgezeichnet:** 2026-08-14
+- **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** vollstaendig; Schluesselzahlen
 - **Groesse:** 21930 B
 - **SHA-256:** `5fea0264f6c79bed8805847a6006ad9c0bcf46a5d06554d02ec90c455e138c50`
@@ -101,7 +109,7 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 ## `uvg_publikationen.html`
 
 - **Quelle:** `https://www.unfallstatistik.ch/d/publik/unfstat/unfstat_d.htm`
-- **Aufgezeichnet:** 2026-08-14
+- **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** vollstaendig; Publikationsliste
 - **Groesse:** 12705 B
 - **SHA-256:** `7fc8b9f57ad201784b37b7fccaf3e03f275d735d547e832671a0333844cd7919`
@@ -109,7 +117,7 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 ## `uvg_jahresbericht_ts26.pdf`
 
 - **Quelle:** `https://www.unfallstatistik.ch/d/publik/unfstat/pdf/Ts26.pdf`
-- **Aufgezeichnet:** 2026-08-14
+- **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** 3 von 70 Seiten, Inhalt unveraendert: Tabelle 1.2 auf S. 13, Tabelle 2.4/Berufsunfallversicherung auf S. 27, Tabelle 2.4/Nichtberufsunfallversicherung auf S. 28. Gekuerzt ist die Zahl der Seiten, nie ihr Text — der Parser liest Beschriftung, Zeilen und Spalten aus dem Layout
 - **Groesse:** 66363 B (Quelle: 70 Seiten, 2168646 B)
 - **SHA-256:** `ac0f653c6881fa65cddc491d5199c1a47155e5ea4e18169d7118abaaee2fbd50`
@@ -117,7 +125,7 @@ Die lassen sich nicht auf Zuruf aufzeichnen.
 ## `uvg_branche_buv_41.pdf`
 
 - **Quelle:** `https://www.unfallstatistik.ch/d/neuza/WirtKl_d/WirtKl_BUV_41.pdf`
-- **Aufgezeichnet:** 2026-08-14
+- **Aufgezeichnet:** 2026-08-15
 - **Auswahl:** vollstaendig; NOGA 41, BUV — klein genug, um ungekuerzt zu bleiben
 - **Groesse:** 219236 B
 - **SHA-256:** `3f9c50e4f940ae9bc3ccc29271fb10dd9861dda21c3d3eba3c30ddff103205a2`

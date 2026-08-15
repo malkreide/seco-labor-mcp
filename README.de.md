@@ -39,10 +39,44 @@ Dieser Server verbindet KI-Modelle mit offiziellen Schweizer Arbeitsmarktstatist
 
 | Quelle | Beschreibung | Status |
 |--------|-------------|--------|
-| [opendata.swiss](https://opendata.swiss/de/dataset?q=seco) | CKAN-Katalog mit SECO-CSV-Datensätzen | ✅ Aktiv |
+| [opendata.swiss](https://opendata.swiss/de/dataset) | CKAN-Katalog; die gepinnte BFS-Tabelle `T3.3.0.1` trägt die SECO-Jahresreihen | ✅ Aktiv |
 | [arbeit.swiss](https://www.arbeit.swiss) | Monatliche Pressedokumentation (PDF) | ✅ Aktiv |
 | [amstat.ch](https://www.amstat.ch) | AMSTAT-Referenzportal | ⚠️ JavaScript SPA |
 | [unfallstatistik.ch](https://www.unfallstatistik.ch) | Unfallstatistik UVG (SSUV/KSUV c/o Suva) — Berufsunfälle und Berufskrankheiten | ⚠️ Nur PDF, keine API (siehe unten) |
+
+---
+
+## Woher die Zahlen kommen — und was fehlt
+
+**SECO ist auf opendata.swiss kein Herausgeber (mehr).** Geprüft am 2026-08-14:
+`organization_show` antwortet 404, und in den 176 Einträgen von
+`organization_list` kommt kein SECO vor. Der Server filterte bis dahin jede
+Suche auf diese Organisation und lieferte deshalb **nichts** — ein
+Namensabgleich, der ins Leere läuft, sieht genau aus wie eine leere Suche.
+
+Die registrierten Arbeitslosen und Stellensuchenden sind trotzdem SECO-Zahlen:
+das **BFS veröffentlicht sie** in Tabelle `T3.3.0.1` und nennt SECO in der
+Fusszeile als Quelle. Der Server liest diese Tabelle über eine **gepinnte
+Datensatz-Kennung** (`sources.py`), die ein Live-Test gegen die Quelle prüft.
+
+| Reihe | 2000 | 2025 |
+|---|---|---|
+| Registrierte Stellensuchende (SECO) | 124.6 | 214.1 |
+| Registrierte Arbeitslose (SECO) | 72.0 | 133.7 |
+| Erwerbslose gemäss ILO (BFS) | 126.5 | 248.5 |
+
+*in Tausend, Jahresdurchschnitt*
+
+Die drei Reihen messen **nicht dasselbe**: im Jahr 2000 ist die ILO-Zahl das
+1.76-fache der registrierten. Der Server gibt sie getrennt und beschriftet aus
+und rechnet sie nie ineinander um.
+
+**Was es zurzeit nicht gibt:** Monatswerte, kantonale Aufschlüsselungen,
+Jugendarbeitslosigkeit (portalweit null Datensätze) und Arbeitslose nach
+Berufshauptgruppe. Die betroffenen Werkzeuge sagen das und geben **keine**
+Ersatzzahl aus. Interaktiv stehen diese Werte auf
+[amstat.ch](https://www.amstat.ch/v2/amstat_de.html); dort gibt es keine
+Schnittstelle, die ein Server ansprechen könnte.
 
 ---
 
@@ -50,13 +84,13 @@ Dieser Server verbindet KI-Modelle mit offiziellen Schweizer Arbeitsmarktstatist
 
 | Tool | Beschreibung | Hauptanwendung |
 |------|-------------|----------------|
-| `seco_search_datasets` | SECO-Datensätze auf opendata.swiss suchen | Datensatz-Discovery |
+| `seco_search_datasets` | Arbeitsmarkt-Datensätze auf opendata.swiss suchen (mit Herausgeber je Treffer) | Datensatz-Discovery |
 | `seco_get_dataset` | Vollständige Metadaten und Download-Links | Datenzugang |
-| `seco_get_unemployment_overview` | Nationale/kantonale Arbeitslosenzahlen | Überblick |
-| `seco_get_youth_unemployment` | Jugendarbeitslosigkeit (15–24 J.) | 🎓 Berufswahlberatung |
-| `seco_get_job_seekers` | Stellensuchende (breiter als Arbeitslose) | Weiterbildungsbedarf |
-| `seco_get_open_positions` | Offene Stellen als Frühindikator | Branchenanalyse |
-| `seco_get_unemployment_by_occupation` | Aufschlüsselung nach Berufshauptgruppe | 🎓 Berufswahl |
+| `seco_get_unemployment_overview` | Registrierte Arbeitslose, national, Jahresreihe ab 2000 | Überblick |
+| `seco_get_youth_unemployment` | Jugendarbeitslosigkeit (15–24 J.) — **zurzeit ohne Datenquelle**, siehe unten | 🎓 Berufswahlberatung |
+| `seco_get_job_seekers` | Registrierte Stellensuchende, national, Jahresreihe ab 2000 | Weiterbildungsbedarf |
+| `seco_get_open_positions` | Offene Stellen als Frühindikator — **keine nationale Reihe verfügbar** | Branchenanalyse |
+| `seco_get_unemployment_by_occupation` | Aufschlüsselung nach Berufshauptgruppe — **keine maschinenlesbare Quelle** | 🎓 Berufswahl |
 | `seco_get_monthly_report_url` | PDF-URL für SECO-Monatsberichte | Quellenverifizierung |
 | `seco_list_cantons` | Alle 26 Kantonscodes und -namen | Hilfsfunktion |
 | `seco_get_uvg_overview` | UVG-Schlüsselzahlen zu Berufsunfällen und Berufskrankheiten | Risiko-Überblick |

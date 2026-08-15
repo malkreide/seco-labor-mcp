@@ -133,7 +133,7 @@ async def test_a_real_empty_search_still_suggests_other_terms():
     """
     _mock({"success": True, "result": {"results": [], "count": 0}})
     out = await seco_search_datasets(DatasetSearchInput(query="gibtesnicht"))
-    assert "Keine SECO-Datensätze" in out
+    assert "Keine Datensätze" in out
     assert "Arbeitslosigkeit" in out
 
 
@@ -141,17 +141,31 @@ async def test_a_real_empty_search_still_suggests_other_terms():
 
 
 def test_every_search_tool_goes_through_the_helper():
-    """Sechs Fundstellen über sechs Werkzeuge.
+    """Keine Suchstelle liest die Trefferliste an der Bestätigung vorbei.
 
-    Eine davon zu vergessen halbiert die Zusage still. Der Test zählt die
-    Aufrufstellen im Quelltext, weil fünf der sechs in Werkzeugen sitzen, die
-    ihren CKAN-Fehler ohnehin verschlucken (`except Exception: datasets = []`)
-    und deshalb auch nach dem Fix nicht von selbst rot würden.
+    Eine davon zu vergessen halbiert die Zusage still: die betroffenen
+    Werkzeuge verschlucken ihren CKAN-Fehler ohnehin (`except Exception:
+    datasets = []`) und würden auch nach dem Fix nicht von selbst rot.
+
+    Gezählt wird deshalb nicht mehr eine feste Zahl von Fundstellen — die
+    änderte sich mit jedem Umbau, zuletzt von sechs auf drei, ohne dass an der
+    Regel etwas anders wäre. Geprüft wird die Regel selbst: **jedem
+    `_ckan_search(` folgt in den nächsten Zeilen ein `_ckan_results(`.**
     """
     from pathlib import Path
 
     source = Path(__file__).parent.parent / "src" / "seco_labor_mcp" / "server.py"
-    body = source.read_text(encoding="utf-8")
-    assert body.count("_ckan_results(search_result)") == 5
-    assert body.count("_ckan_results(result)") == 1
-    assert '.get("result", {}).get("results", [])' not in body
+    zeilen = source.read_text(encoding="utf-8").split("\n")
+    aufrufe = [
+        i
+        for i, z in enumerate(zeilen)
+        if "await _ckan_search(" in z and not z.lstrip().startswith("#")
+    ]
+    assert aufrufe, "keine einzige Suchstelle gefunden — Test ins Leere gelaufen"
+    for i in aufrufe:
+        umgebung = "\n".join(zeilen[i : i + 6])
+        assert "_ckan_results(" in umgebung, (
+            f"Suchstelle in Zeile {i + 1} liest die Trefferliste ohne "
+            f"`_ckan_results()`:\n{umgebung}"
+        )
+    assert '.get("result", {}).get("results", [])' not in "\n".join(zeilen)

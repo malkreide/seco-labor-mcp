@@ -6,7 +6,6 @@ Live tests live in tests/test_live.py and are skipped unless --run-live.
 """
 
 import json
-from datetime import datetime
 
 import httpx
 import pytest
@@ -14,12 +13,12 @@ import respx
 from pydantic import ValidationError
 
 from seco_labor_mcp import server as _server_mod
+from seco_labor_mcp import sources
 from seco_labor_mcp.server import (
     CANTON_CODES,
     CKAN_BASE,
     DatasetDetailsInput,
     DatasetSearchInput,
-    JobSeekersInput,
     MonthlyReportInput,
     OccupationInput,
     OpenPositionsInput,
@@ -27,12 +26,8 @@ from seco_labor_mcp.server import (
     UnemploymentInput,
     UrlNotAllowedError,
     YouthUnemploymentInput,
-    _detect_latest_period,
-    _parse_csv,
-    _select_rows_for_canton,
     _validate_external_url,
     seco_get_dataset,
-    seco_get_job_seekers,
     seco_get_monthly_report_url,
     seco_get_open_positions,
     seco_get_unemployment_by_occupation,
@@ -294,7 +289,10 @@ class TestSecoSearchDatasets:
         inp = DatasetSearchInput(query="arbeitslose kantone")
         result = await seco_search_datasets(inp)
 
-        assert "SECO-Datensätze" in result
+        # Nicht mehr "SECO-Datensätze": die Suche läuft ohne Herausgeberfilter,
+        # und die Treffer stammen vom BFS, von Kantonen und weiteren Stellen.
+        assert "SECO-Datensätze" not in result
+        assert "Herausgeber" in result
         assert "Monatliche Arbeitslosenzahlen" in result
         assert "monatliche-arbeitslosenzahlen-2024" in result
 
@@ -324,7 +322,10 @@ class TestSecoSearchDatasets:
         inp = DatasetSearchInput(query="nichtexistent xyz abc")
         result = await seco_search_datasets(inp)
 
-        assert "Keine SECO-Datensätze" in result
+        assert "Keine Datensätze" in result
+        # Eine leere Antwort heisst jetzt wirklich "es gibt dazu nichts" und
+        # nicht "der Filter hat niemanden getroffen".
+        assert "ganzen Bestand" in result
 
     @pytest.mark.asyncio
     @respx.mock
@@ -443,8 +444,11 @@ class TestYouthUnemployment:
         result = await seco_get_youth_unemployment(inp)
 
         data = json.loads(result)
-        assert "education_context" in data
-        assert "key_indicators" in data["education_context"]
+        # Das Werkzeug liefert keine Zahlen mehr, sondern eine benannte Absage:
+        # es gibt portalweit keine maschinenlesbare Quelle für 15–24-Jährige.
+        assert data["data_available"] is False
+        assert "seasonal_pattern_qualitative" in data
+        assert "amstat" in json.dumps(data), "die Absage nennt, wo die Zahlen stehen"
 
 
 class TestUnemploymentOverview:
@@ -453,17 +457,18 @@ class TestUnemploymentOverview:
     @pytest.mark.asyncio
     @respx.mock
     async def test_overview_national(self):
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        # Also mock CSV download (will fail gracefully)
-        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(404)
-        )
-        inp = UnemploymentInput()
-        result = await seco_get_unemployment_overview(inp)
+        """Die Uebersicht liest jetzt die gepinnte Tabelle, nicht die Suche.
 
-        assert "Arbeitslosigkeit" in result or "arbeitslos" in result.lower()
+        Die echten Zahlen und die Form der Antwort pruefen die
+        Aufzeichnungstests; hier geht es nur darum, dass der Weg ueber
+        `package_show` auf die gepinnte Kennung fuehrt.
+        """
+        route = respx.get(url__startswith=f"{CKAN_BASE}/package_show").mock(
+            return_value=httpx.Response(500)
+        )
+        with pytest.raises(Exception):  # noqa: B017 — 5xx ist ein Protokollfehler
+            await seco_get_unemployment_overview(UnemploymentInput())
+        assert sources.JAHRESREIHE.ckan_id in str(route.calls.last.request.url)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -611,322 +616,6 @@ SAMPLE_CSV_SEMICOLON = (
 )
 
 
-class TestCsvParser:
-    """Tests for the defensive CSV parser helpers."""
-
-    def test_parse_semicolon_csv(self):
-        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
-        assert parsed["parsed"] is True
-        assert parsed["delimiter"] == ";"
-        assert parsed["headers"] == ["Datum", "Kanton", "Arbeitslose", "Quote_pct"]
-        assert len(parsed["rows"]) == 9
-
-    def test_parse_comma_csv(self):
-        comma_csv = "year,canton,unemployed\n2025,ZH,25000\n2025,GE,15000\n"
-        parsed = _parse_csv(comma_csv)
-        assert parsed["parsed"] is True
-        assert parsed["delimiter"] == ","
-        assert len(parsed["rows"]) == 2
-
-    def test_parse_empty_csv(self):
-        assert _parse_csv("")["parsed"] is False
-        assert _parse_csv("only_header_no_rows\n")["parsed"] is False
-
-    def test_detect_latest_period(self):
-        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
-        assert _detect_latest_period(parsed) == "2025-12"
-
-    def test_detect_period_returns_none_when_absent(self):
-        parsed = _parse_csv("a;b\n1;2\n3;4\n")
-        assert _detect_latest_period(parsed) is None
-
-    def test_select_rows_canton_filter(self):
-        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
-        zh = _select_rows_for_canton(parsed, "ZH", limit=10)
-        assert len(zh) == 3
-        assert all("ZH" in row for row in zh)
-
-    def test_select_rows_no_canton(self):
-        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
-        all_recent = _select_rows_for_canton(parsed, None, limit=4)
-        assert len(all_recent) == 4
-
-    def test_select_rows_unknown_canton(self):
-        parsed = _parse_csv(SAMPLE_CSV_SEMICOLON)
-        assert _select_rows_for_canton(parsed, "XX", limit=5) == []
-
-
-class TestUnemploymentOverviewLiveCsv:
-    """Tests that the overview tool surfaces parsed CSV data when available."""
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_overview_with_live_csv_json(self):
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(
-                200,
-                content=SAMPLE_CSV_SEMICOLON.encode("utf-8"),
-                headers={"content-type": "text/csv"},
-            )
-        )
-        inp = UnemploymentInput(response_format=ResponseFormat.JSON)
-        result = await seco_get_unemployment_overview(inp)
-        data = json.loads(result)
-
-        assert data["data_available"] is True
-        assert "live" in data
-        assert data["live"]["data_source"] == "live_csv"
-        assert data["live"]["reference_period"] == "2025-12"
-        assert data["live"]["total_rows"] == 9
-        assert data["live"]["headers"] == ["Datum", "Kanton", "Arbeitslose", "Quote_pct"]
-        # snapshot must NOT be included when live data is available
-        assert "reference_snapshot" not in data
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_overview_live_csv_canton_filter_zh(self):
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
-        )
-        inp = UnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
-        result = await seco_get_unemployment_overview(inp)
-        data = json.loads(result)
-
-        sample = data["live"]["sample_rows"]
-        assert len(sample) == 3
-        assert all("ZH" in row for row in sample)
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_overview_live_csv_markdown(self):
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
-        )
-        inp = UnemploymentInput()
-        result = await seco_get_unemployment_overview(inp)
-
-        assert "Live-Daten" in result
-        assert "2025-12" in result
-        # The static snapshot warning must NOT appear when live data is shown
-        assert "statischer Referenz-Snapshot" not in result
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_overview_falls_back_to_snapshot_when_csv_404(self):
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(404)
-        )
-        inp = UnemploymentInput(response_format=ResponseFormat.JSON)
-        result = await seco_get_unemployment_overview(inp)
-        data = json.loads(result)
-
-        assert data["data_available"] is False
-        assert "reference_snapshot" in data
-        assert data["reference_snapshot"]["data_source"] == "static_reference"
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_overview_cache_reuses_response(self):
-        """Second call within TTL must not trigger a second HTTP fetch."""
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=MOCK_CKAN_SEARCH_RESPONSE)
-        )
-        csv_route = respx.get("https://www.seco.admin.ch/data/arbeitslose_2024.csv").mock(
-            return_value=httpx.Response(200, content=SAMPLE_CSV_SEMICOLON.encode("utf-8"))
-        )
-        await seco_get_unemployment_overview(UnemploymentInput())
-        await seco_get_unemployment_overview(UnemploymentInput())
-        assert csv_route.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# Live-CSV path for youth + job seekers
-# ---------------------------------------------------------------------------
-
-
-YOUTH_CSV = (
-    "Datum;Kanton;Altersgruppe;Arbeitslose\n"
-    "2025-11;CH;15-24;14200\n"
-    "2025-11;ZH;15-24;2700\n"
-    "2025-12;CH;15-24;15100\n"
-    "2025-12;ZH;15-24;2880\n"
-)
-
-JOB_SEEKERS_CSV = (
-    "Datum;Kanton;Stellensuchende;Arbeitslose\n"
-    "2025-11;CH;230100;143500\n"
-    "2025-11;GE;14800;13200\n"
-    "2025-12;CH;233900;147275\n"
-    "2025-12;GE;15100;13400\n"
-)
-
-
-def _ckan_search_with_csv(url: str, title: str = "Live") -> dict:
-    """Build a minimal CKAN search response advertising a single CSV resource."""
-    return {
-        "success": True,
-        "result": {
-            "count": 1,
-            "results": [
-                {
-                    "name": "live-dataset",
-                    "id": "live123",
-                    "title": {"de": title},
-                    "notes": {"de": "Live test dataset."},
-                    "metadata_modified": "2025-12-15T10:00:00",
-                    "tags": [],
-                    "resources": [
-                        {
-                            "id": "live-res",
-                            "name": {"de": "Live CSV"},
-                            "format": "CSV",
-                            "url": url,
-                            "size": 1024,
-                            "last_modified": "2025-12-12",
-                        }
-                    ],
-                }
-            ],
-        },
-    }
-
-
-class TestYouthLiveCsv:
-    """Live-CSV path for seco_get_youth_unemployment."""
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_youth_live_json(self):
-        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
-        )
-        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
-        inp = YouthUnemploymentInput(response_format=ResponseFormat.JSON)
-        result = await seco_get_youth_unemployment(inp)
-        data = json.loads(result)
-
-        assert data["data"]["data_source"] == "live_csv"
-        assert data["data"]["reference_period"] == "2025-12"
-        assert data["data"]["headers"] == ["Datum", "Kanton", "Altersgruppe", "Arbeitslose"]
-        assert "reference_snapshot" not in data["data"]
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_youth_live_markdown_shows_live_block(self):
-        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Jugend"))
-        )
-        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
-        result = await seco_get_youth_unemployment(YouthUnemploymentInput())
-        assert "Live-Daten" in result
-        assert "2025-12" in result
-        assert "statischer Referenz-Snapshot" not in result
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_youth_canton_filter_zh(self):
-        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
-        )
-        respx.get(csv_url).mock(return_value=httpx.Response(200, content=YOUTH_CSV.encode("utf-8")))
-        inp = YouthUnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
-        data = json.loads(await seco_get_youth_unemployment(inp))
-        sample = data["data"]["sample_rows"]
-        assert sample
-        assert all("ZH" in row for row in sample)
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_youth_falls_back_to_snapshot_on_404(self):
-        csv_url = "https://www.seco.admin.ch/data/jugend_altersgruppe.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
-        )
-        respx.get(csv_url).mock(return_value=httpx.Response(404))
-        inp = YouthUnemploymentInput(response_format=ResponseFormat.JSON)
-        data = json.loads(await seco_get_youth_unemployment(inp))
-        assert "reference_snapshot" in data["data"]
-        assert data["data"]["reference_snapshot"]["data_source"] == "static_reference"
-
-
-class TestJobSeekersLiveCsv:
-    """Live-CSV path for seco_get_job_seekers."""
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_job_seekers_live_json(self):
-        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url, "Stellensuchende"))
-        )
-        respx.get(csv_url).mock(
-            return_value=httpx.Response(200, content=JOB_SEEKERS_CSV.encode("utf-8"))
-        )
-        inp = JobSeekersInput(response_format=ResponseFormat.JSON)
-        result = await seco_get_job_seekers(inp)
-        data = json.loads(result)
-
-        assert "live" in data
-        assert data["live"]["data_source"] == "live_csv"
-        assert data["live"]["reference_period"] == "2025-12"
-        assert data["live"]["headers"] == [
-            "Datum",
-            "Kanton",
-            "Stellensuchende",
-            "Arbeitslose",
-        ]
-        assert "reference_snapshot" not in data
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_job_seekers_canton_filter_ge(self):
-        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
-        )
-        respx.get(csv_url).mock(
-            return_value=httpx.Response(200, content=JOB_SEEKERS_CSV.encode("utf-8"))
-        )
-        inp = JobSeekersInput(canton="GE", response_format=ResponseFormat.JSON)
-        data = json.loads(await seco_get_job_seekers(inp))
-        sample = data["live"]["sample_rows"]
-        assert sample
-        assert all("GE" in row for row in sample)
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_job_seekers_falls_back_to_snapshot_on_404(self):
-        csv_url = "https://www.seco.admin.ch/data/stellensuchende_kantone.csv"
-        respx.get(f"{CKAN_BASE}/package_search").mock(
-            return_value=httpx.Response(200, json=_ckan_search_with_csv(csv_url))
-        )
-        respx.get(csv_url).mock(return_value=httpx.Response(404))
-        inp = JobSeekersInput(response_format=ResponseFormat.JSON)
-        data = json.loads(await seco_get_job_seekers(inp))
-        assert "reference_snapshot" in data
-        assert "live" not in data
-
-
-# ---------------------------------------------------------------------------
-# SEC-004 SSRF validator
-# ---------------------------------------------------------------------------
-
-
 class TestSsrfValidator:
     """Tests for _validate_external_url (SEC-004). All async because the
     validator does DNS resolution on the event loop's executor."""
@@ -968,132 +657,135 @@ class TestSsrfValidator:
             await _validate_external_url("https://169.254.169.254/latest/meta-data/")
 
     @pytest.mark.asyncio
-    async def test_csv_fetch_skips_internal_url(self):
-        """_fetch_text_cached must return None when the URL is rejected,
-        without ever opening a socket to it."""
-        result = await _server_mod._fetch_text_cached("http://169.254.169.254/csv")
-        assert result is None
+    async def test_fetch_skips_internal_url(self):
+        """Der Abruf oeffnet gegen eine abgelehnte URL keinen Socket.
 
-    @pytest.mark.asyncio
-    async def test_cache_evicts_oldest_when_full(self):
-        """_cache_put must drop the oldest entry once _CSV_CACHE_MAX is exceeded."""
-        _server_mod._CSV_CACHE.clear()
-        for i in range(_server_mod._CSV_CACHE_MAX + 5):
-            _server_mod._cache_put(f"https://example.test/csv/{i}", f"row{i}")
-        assert len(_server_mod._CSV_CACHE) == _server_mod._CSV_CACHE_MAX
-        # First 5 inserts must have been evicted; the most recent must be present.
-        assert "https://example.test/csv/0" not in _server_mod._CSV_CACHE
-        assert (
-            f"https://example.test/csv/{_server_mod._CSV_CACHE_MAX + 4}" in _server_mod._CSV_CACHE
-        )
+        Frueher prueste das denselben Satz gegen `_fetch_text_cached`, das bei
+        Ablehnung `None` lieferte. Der neue Weg wirft stattdessen — eine
+        Policy-Ablehnung soll den Aufrufer erreichen und nicht als leeres
+        Ergebnis aussehen.
+        """
+        with pytest.raises(UrlNotAllowedError):
+            await _server_mod._fetch_bytes_with_retry("http://169.254.169.254/x.xlsx")
 
 
-class TestCsvFetchRetry:
-    """Retry-Verhalten von `_fetch_text_cached`.
+class TestBytesFetchRetry:
+    """Retry-Verhalten von `_fetch_bytes_with_retry`.
 
-    Der Pfad setzte bis dahin einen einzigen GET ab und gab bei jedem Fehler
-    `None` zurueck — ein Upstream-Blip sah damit aus wie «keine Daten».
+    Die Vorgaengerin dieser Klasse prueft `_fetch_text_cached`, den Abrufweg
+    des CSV-Zweigs. Der ist mit dem Umbau auf die gepinnte BFS-Tabelle
+    entfallen; die Zusicherungen ueber das Retry-Verhalten gelten aber
+    unveraendert weiter und stehen deshalb hier, gegen den neuen Weg.
+
+    Ein Unterschied ist gewollt: der alte Pfad gab bei jedem Scheitern `None`
+    zurueck, der neue wirft. Eine leere Antwort war beim CSV-Zweig noch
+    vertretbar, weil daneben ein statischer Snapshot stand; jetzt ist der
+    Abruf die einzige Quelle, und ein stiller `None` waere eine leere Reihe
+    ohne Grund.
     """
 
     @pytest.fixture(autouse=True)
     def _fast_backoff(self, monkeypatch):
-        """Backoff auf null (geprueft wird die Anzahl Versuche, nicht die
-        Wartezeit) und SSRF-Pruefung ueberbrueckt.
+        """Wartezeit auf null und SSRF-Pruefung ueberbrueckt.
 
-        Die Pruefung loest DNS wirklich auf; gegen eine Testdomain wie
-        `example.test` schlaegt das fehl und `_fetch_text_cached` kehrt zurueck,
-        bevor respx ueberhaupt gefragt wird. Hier geht es um das Retry-Verhalten,
-        nicht um die Policy — die hat ihre eigenen Tests weiter oben.
+        Gepatcht wird der Modul-Alias `_sleep`, nicht `asyncio.sleep`: Letzteres
+        ersetzt die Funktion auf dem geteilten Modulobjekt, also auch fuer httpx,
+        respx und pytest-asyncio.
+
+        Die SSRF-Pruefung loest DNS wirklich auf; gegen `example.test` schlaegt
+        das fehl, bevor respx ueberhaupt gefragt wird. Hier geht es um das
+        Retry-Verhalten, nicht um die Policy — die hat eigene Tests.
         """
 
         async def _allow(_url: str) -> None:
             return None
 
-        monkeypatch.setattr(_server_mod, "HTTP_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+        async def _instant(_seconds):
+            return None
+
+        monkeypatch.setattr(_server_mod, "_sleep", _instant)
         monkeypatch.setattr(_server_mod, "_validate_external_url", _allow)
-        _server_mod._CSV_CACHE.clear()
-        yield
-        _server_mod._CSV_CACHE.clear()
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_transient_5xx_then_success(self):
-        url = "https://example.test/data.csv"
+        url = "https://example.test/data.xlsx"
         route = respx.get(url).mock(
             side_effect=[
                 httpx.Response(503),
                 httpx.Response(500),
-                httpx.Response(200, content=b"a;b\n1;2\n"),
+                httpx.Response(200, content=b"nutzlast"),
             ]
         )
-        assert await _server_mod._fetch_text_cached(url) == "a;b\n1;2\n"
+        assert await _server_mod._fetch_bytes_with_retry(url) == b"nutzlast"
         assert route.call_count == 3
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_gives_up_after_all_retries(self):
-        url = "https://example.test/down.csv"
+        url = "https://example.test/down.xlsx"
         route = respx.get(url).mock(return_value=httpx.Response(503))
-        assert await _server_mod._fetch_text_cached(url) is None
+        with pytest.raises(_server_mod.UpstreamUnreachableError):
+            await _server_mod._fetch_bytes_with_retry(url)
         assert route.call_count == 4, "ein Versuch plus drei Retries"
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_429_is_retried(self):
-        url = "https://example.test/limited.csv"
+        url = "https://example.test/limited.xlsx"
         route = respx.get(url).mock(return_value=httpx.Response(429))
-        assert await _server_mod._fetch_text_cached(url) is None
+        with pytest.raises(_server_mod.UpstreamUnreachableError):
+            await _server_mod._fetch_bytes_with_retry(url)
         assert route.call_count == 4
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_404_is_not_retried(self):
-        """Ein 404 ist eine Antwort, kein Ausfall."""
-        url = "https://example.test/missing.csv"
+        """Ein 404 ist eine Antwort, kein Ausfall — und wird durchgereicht."""
+        url = "https://example.test/missing.xlsx"
         route = respx.get(url).mock(return_value=httpx.Response(404))
-        assert await _server_mod._fetch_text_cached(url) is None
+        with pytest.raises(httpx.HTTPStatusError):
+            await _server_mod._fetch_bytes_with_retry(url)
         assert route.call_count == 1
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_redirect_is_not_retried(self):
         """follow_redirects=False: ein 302 ist endgueltig, nicht transient."""
-        url = "https://example.test/moved.csv"
+        url = "https://example.test/moved.xlsx"
         route = respx.get(url).mock(
             return_value=httpx.Response(302, headers={"location": "https://elsewhere.test/x"})
         )
-        assert await _server_mod._fetch_text_cached(url) is None
+        with pytest.raises(httpx.HTTPStatusError):
+            await _server_mod._fetch_bytes_with_retry(url)
         assert route.call_count == 1
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_network_error_is_retried(self):
-        url = "https://example.test/flaky.csv"
+        url = "https://example.test/flaky.xlsx"
         route = respx.get(url).mock(side_effect=httpx.ConnectError("boom"))
-        assert await _server_mod._fetch_text_cached(url) is None
+        with pytest.raises(_server_mod.UpstreamUnreachableError):
+            await _server_mod._fetch_bytes_with_retry(url)
         assert route.call_count == 4
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_stale_cache_is_not_served_silently(self):
-        """Anders als die UVG-Envelopes traegt dieser Pfad kein provenance-Feld.
-        Nach erschoepften Retries darf er deshalb keine alten Daten liefern —
-        der Aufrufer koennte frisch und alt nicht unterscheiden."""
-        url = "https://example.test/stale.csv"
-        _server_mod._CSV_CACHE[url] = (
-            datetime.now() - _server_mod._CSV_TTL * 2,
-            "alte;daten\n",
-        )
-        respx.get(url).mock(return_value=httpx.Response(503))
-        assert await _server_mod._fetch_text_cached(url) is None
+    async def test_der_fehler_nennt_die_ursache(self):
+        """`httpx.ConnectError` traegt ein leeres `str()` — der Typ muss dastehen."""
+        url = "https://example.test/leer.xlsx"
+        respx.get(url).mock(side_effect=httpx.ConnectError(""))
+        with pytest.raises(_server_mod.UpstreamUnreachableError) as exc:
+            await _server_mod._fetch_bytes_with_retry(url)
+        assert "ConnectError" in str(exc.value)
+        assert "kein weiterer Hinweis" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_rejected_url_is_validated_once(self, monkeypatch):
         """Eine von der SSRF-Policy abgelehnte URL wird nicht erneut aufgeloest.
 
         Ein zweiter Anlauf brauchte eine zweite DNS-Aufloesung fuer ein Ziel,
-        das wir bereits verweigert haben — genau das Zeitfenster, das
-        `follow_redirects=False` sonst schliesst.
+        das wir bereits verweigert haben.
         """
         calls = 0
 
@@ -1103,5 +795,6 @@ class TestCsvFetchRetry:
             raise _server_mod.UrlNotAllowedError("nope")
 
         monkeypatch.setattr(_server_mod, "_validate_external_url", counting)
-        assert await _server_mod._fetch_text_cached("https://169.254.169.254/csv") is None
+        with pytest.raises(_server_mod.UrlNotAllowedError):
+            await _server_mod._fetch_bytes_with_retry("https://169.254.169.254/x.xlsx")
         assert calls == 1

@@ -47,6 +47,12 @@ dependencies = [
     # layout-Extraktionsmodus, dessen Whitespace-Verhalten die Spaltentrennung
     # traegt -- ein Major-Bump darf hier nicht ungefragt einziehen.
     "pypdf>=5.0.0,<7",
+    # openpyxl fuer die BFS-Jahrestabelle. Die Reihe der registrierten
+    # Arbeitslosen und Stellensuchenden gibt es nur als XLSX -- weder CSV noch
+    # SDMX, geprueft am 2026-08-14. Der Parser haengt an der Zellenlesung von
+    # `read_only`-Arbeitsmappen; ein Major-Bump darf hier nicht ungefragt
+    # einziehen.
+    "openpyxl>=3.1.0,<4",
 ]
 
 [project.optional-dependencies]

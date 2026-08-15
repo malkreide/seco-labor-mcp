@@ -11,11 +11,13 @@ CI excludes this file via `pytest -m "not live"`.
 
 import pytest
 
-from seco_labor_mcp import uvg
+from seco_labor_mcp import sources, uvg
 from seco_labor_mcp.server import (
     CANTON_CODES,
     DatasetSearchInput,
     YouthUnemploymentInput,
+    _bfs_jahresreihe,
+    _ckan_get_dataset,
     seco_get_youth_unemployment,
     seco_list_cantons,
     seco_search_datasets,
@@ -31,8 +33,67 @@ class TestLiveAPI:
         """Test real CKAN search against opendata.swiss."""
         inp = DatasetSearchInput(query="Arbeitslosigkeit Kantone", limit=3)
         result = await seco_search_datasets(inp)
-        # Should return some content, not an error
-        assert "Error" not in result or "SECO" in result
+        assert "Keine Datensätze" not in result, (
+            "die Suche liefert portalweit nichts mehr — das war das Symptom des "
+            "Organisationsfilters und darf nicht zurückkommen"
+        )
+
+    @pytest.mark.asyncio
+    async def test_die_gepinnte_kennung_existiert_noch(self):
+        """Der Mechanismus, der den letzten Ausfall gemeldet hätte.
+
+        Der frühere Organisationsfilter war ein Namensabgleich: verschwand die
+        Organisation, wurde nicht ein Test rot, sondern eine Antwort leer.
+        `sources.py` pinnt stattdessen eine Kennung, und dieser Test hält sie
+        gegen die echte Quelle. Verschwindet der Datensatz, ist das hier ein
+        roter Test und kein stiller Ausfall.
+        """
+        for datensatz in sources.GEPINNTE_DATENSAETZE:
+            paket = await _ckan_get_dataset(datensatz.ckan_id)
+            assert paket.get("success") is True, (
+                f"{datensatz.slug}: CKAN meldet keinen Erfolg — Kennung geprüft?"
+            )
+            ds = paket["result"]
+            assert ds["id"] == datensatz.ckan_id
+            formate = {(r.get("format") or "").upper() for r in ds.get("resources", [])}
+            assert formate & {"XLS", "XLSX"}, (
+                f"{datensatz.slug} führt keine Tabellenressource mehr: {sorted(formate)}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_die_jahresreihe_stimmt_noch_mit_der_quelle_ueberein(self):
+        """Beschriftungen, Jahre und der Abstand der Reihen — in einem Abruf.
+
+        Bewusst ein Test und nicht drei: die Mappe liegt hinter einem Host, der
+        die TLS-Verhandlung sporadisch abbricht (beim Aufzeichnen zweimal in
+        Folge, einmal auch im Live-Lauf). Drei Tests holten dieselben 17 kB
+        dreimal und verdreifachten damit die Angriffsfläche für einen Aussetzer,
+        ohne eine einzige Zusicherung mehr zu tragen.
+
+        Die aufgezeichnete Fixture belegt die Form von einem Tag; nur der
+        Live-Lauf merkt, wenn die Quelle sie danach ändert.
+        """
+        daten = await _bfs_jahresreihe()
+
+        # 1. Die Beschriftungen stehen wörtlich, nicht über Zeilenpositionen.
+        assert set(daten["series"]) == set(sources.REIHEN)
+        for schluessel, praefix in sources.REIHEN.items():
+            assert daten["labels"][schluessel].startswith(praefix)
+            assert daten["series"][schluessel], f"Reihe {schluessel} ist leer"
+
+        # 2. Die Reihe wächst weiter.
+        jahre = daten["years"]
+        assert jahre[-1] >= 2024, f"jüngstes Jahr {jahre[-1]} — Reihe eingefroren?"
+
+        # 3. Die Verwechslung, die dieser Server nicht machen darf: die
+        #    ILO-Erwerbslosigkeit liegt deutlich über den registrierten
+        #    Arbeitslosen, und die Stellensuchenden über beiden.
+        registriert = daten["series"]["registrierte_arbeitslose"]
+        ilo = daten["series"]["erwerbslose_ilo"]
+        suchende = daten["series"]["registrierte_stellensuchende"]
+        gemeinsam = sorted(set(registriert) & set(ilo) & set(suchende))
+        assert max(ilo[j] / registriert[j] for j in gemeinsam if registriert[j]) > 1.3
+        assert all(suchende[j] > registriert[j] for j in gemeinsam)
 
     @pytest.mark.asyncio
     async def test_youth_unemployment_live(self):

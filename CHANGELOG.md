@@ -7,8 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Der Server liest die SECO-Zahlen jetzt über eine gepinnte Kennung statt über
+  einen Organisationsfilter.** Der Filter auf
+  `organization:staatssekretariat-fur-wirtschaft-seco` war ein Namensabgleich,
+  und als die Organisation von opendata.swiss verschwand, lief er still ins
+  Leere: jede Suche null Treffer, jedes Werkzeug «Keine SECO-Datensätze
+  gefunden». An seine Stelle tritt ein Literal-Register in `sources.py` —
+  dasselbe Muster wie `CANTON_INSTITUTION_IDS` in `swiss-procurement-mcp`.
+  Das verschiebt den Fehler von *still* nach *laut*: `test_live.py` prüft jede
+  Kennung gegen die Quelle, und eine verschwundene Kennung ist ein roter Test
+  statt einer leeren Antwort.
+- **Herausgeber und Datenquelle werden getrennt benannt.** Die registrierten
+  Arbeitslosen und Stellensuchenden sind SECO-Zahlen aus dem RAV-System;
+  veröffentlicht werden sie vom BFS in Tabelle `T3.3.0.1`, das SECO in seiner
+  Fusszeile als Quelle nennt. Jede Antwort führt beide Häuser. Der Server
+  behauptet nicht mehr, SECOs eigenes Portal zu lesen — amstat.ch ist eine
+  MicroStrategy-Anwendung ohne Schnittstelle.
+- **`seco_search_datasets` sucht ohne Herausgeberfilter und zeigt bei jedem
+  Treffer, von wem er stammt.** Datensätze zum Arbeitsmarkt gibt es; sie
+  stammen vom BFS, von Kantonen und vom liechtensteinischen Amt für Statistik.
+  Sie unter der Überschrift «SECO-Datensätze» zu zeigen wäre genau die
+  Verwechslung, die dieser Umbau behebt.
+
+### Removed
+
+- **Die statischen Referenz-Snapshots.** `seco_get_unemployment_overview` gab
+  bei jedem Aufruf 147'275 Arbeitslose und 3.2 % aus (Dezember 2025) samt einer
+  fest eingetragenen Kantons-Rangliste vom **April 2025**;
+  `seco_get_youth_unemployment` nannte «+2'186 Jugendarbeitslose (+18.6 %)» als
+  Beispielwert. Weil der CKAN-Filter nie traf, war das nicht der Ausnahme-,
+  sondern der **einzige** Pfad: ein Werkzeug namens «Aktuelle Arbeitslosigkeit
+  Schweiz», das seit Monaten April-Zahlen lieferte. Die Warnhinweise daneben
+  ändern daran wenig — gelesen und zitiert wird die Zahl, nicht der Hinweis.
+  Eine Absage kann man nicht falsch zitieren.
+- **Der CSV-Zweig** (`_try_live_csv`, `_fetch_text_cached`, `_parse_csv`,
+  `_select_rows_for_canton`, `_detect_latest_period` und der Cache dazu). Nach
+  der Umstellung auf die gepinnte Tabelle rief ihn kein Werkzeug mehr auf.
+  Ungenutzter Code, den Tests grün halten, sieht aus wie eine Fähigkeit —
+  dieses Repo hat die Lektion schon einmal aufgeschrieben, damals über einen
+  Cache, der nie einen Treffer liefern konnte. Die Retry-Zusicherungen dieses
+  Pfades sind nicht verloren, sondern auf `_fetch_bytes_with_retry` portiert.
+  Kommt eine kantonale Schicht (Thurgau publiziert monatlich nach Alter), holt
+  die Git-Historie ihn zurück.
+- **`seco_get_youth_unemployment`, `seco_get_open_positions` und
+  `seco_get_unemployment_by_occupation` geben keine Zahlen mehr aus.** Für alle
+  drei gibt es keine maschinenlesbare Quelle — «Jugendarbeitslosigkeit» liefert
+  portalweit **null** Datensätze. Sie sagen das jetzt, nennen die Stelle, wo
+  die Werte interaktiv stehen, und behalten die fachliche Einordnung, die als
+  solche gekennzeichnet ist. Ein Werkzeug, das für «Jugendarbeitslosigkeit im
+  Kanton Bern» eine national aggregierte Zahl zurückgibt, ist schlechter als
+  eines, das nichts zurückgibt.
+
 ### Added
 
+- **`sources.py`: das gepinnte Register und der Parser der BFS-Jahrestabelle.**
+  Die Reihenbeschriftungen stehen wörtlich darin, statt über Zeilenpositionen
+  geraten zu werden: schiebt das BFS eine Zeile ein, ist eine falsche Zahl das
+  Ergebnis einer Positionsannahme, aber eine benannte Ausnahme das einer
+  Beschriftungssuche. Fehlt eine Reihe, fliegt `TabelleNichtLesbarError` mit
+  den tatsächlich gefundenen Beschriftungen in der Meldung.
+- **Die ILO-Falle ist ausdrücklich abgesichert.** Dieselbe Tabelle führt
+  registrierte Arbeitslose (SECO) und Erwerbslose gemäss ILO (BFS)
+  untereinander; im Jahr 2000 ist die ILO-Zahl das **1.76-fache**. Der Server
+  gibt beide getrennt und beschriftet aus, und je ein Offline- und ein
+  Live-Test hält den Abstand fest.
+- **`_fetch_bytes_with_retry`** mit der Portfolio-Leiter 2s/4s/8s, `Retry-After`
+  und dem 25-Sekunden-Budget. Ohne sie stand der neue Abruf nackt da: ein
+  einziger `client.get` gegen einen Asset-Host, der die TLS-Verhandlung
+  sporadisch abbricht — beim Aufzeichnen der Fixtures zweimal in Folge.
+  Gepatcht wird über den Modul-Alias `_sleep`, nicht über `asyncio.sleep`.
+- **Zwei Aufzeichnungen für den neuen Weg**: `package_show` auf die gepinnte
+  Kennung und die XLS-Ressource, die dort steht. Die Asset-URL wird bewusst
+  nicht zweitgepinnt — sie ändert sich bei jeder Neupublikation.
+- **`openpyxl`** als Abhängigkeit. Die Reihe gibt es nur als XLSX; weder CSV
+  noch SDMX, geprüft am 2026-08-14.
 - **Eine aufgezeichnete Antwort je externem Endpunkt**, in `tests/fixtures/`,
   mit Herkunft, Aufnahmedatum, Auswahlregel und SHA-256 je Datei in
   `tests/fixtures/PROVENANCE.md`. Neu aufzeichnen mit

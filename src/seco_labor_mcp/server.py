@@ -1,13 +1,16 @@
 """
 SECO Labor Market MCP Server
 =============================
-Swiss labor market data (SECO/AMSTAT) via opendata.swiss CKAN API
-and direct SECO data downloads.
+Schweizer Arbeitsmarktdaten. Die registrierten Arbeitslosen und
+Stellensuchenden sind SECO-Zahlen aus dem RAV-System; veroeffentlicht werden
+sie vom BFS, weil SECO auf opendata.swiss kein Herausgeber (mehr) ist und
+amstat.ch keine Schnittstelle hat. Begruendung, Messung und die gepinnten
+Kennungen stehen in `sources.py`.
 
-Data sources (Phase 1 – No Auth Required):
-  - opendata.swiss CKAN API (metadata catalog)
-  - SECO/AMSTAT published CSV datasets (arbeit.swiss)
-  - Monthly press release PDFs (structural URL pattern)
+Datenquellen (ohne Authentisierung):
+  - opendata.swiss CKAN API (Katalog und die gepinnte BFS-Tabelle T3.3.0.1)
+  - unfallstatistik.ch (UVG: HTML-Kennzahlen und PDF-Jahresberichte)
+  - Monatsbericht-PDFs von arbeit.swiss (URL-Muster)
 
 Primary use cases:
   - Berufswahlberatung (vocational guidance)
@@ -19,18 +22,14 @@ Primary use cases:
 from __future__ import annotations
 
 import asyncio
-import csv as _csv
 import ipaddress
 import json
 import os
-import re
 import socket
 import time
-from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
-from io import StringIO
 from typing import Any
 from urllib.parse import urlparse
 
@@ -38,7 +37,7 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, retry_policy
+from . import __version__, retry_policy, sources
 from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 # ---------------------------------------------------------------------------
@@ -51,6 +50,16 @@ HTTP_TIMEOUT = 30.0
 # uvg.UVG_BACKOFF_SECONDS; die beiden bleiben getrennt, weil uvg.py server.py
 # nicht auf Modulebene importieren kann (server.py importiert uvg.py).
 HTTP_BACKOFF_SECONDS = (2.0, 4.0, 8.0)
+
+# Eigener Alias, damit Tests die Wartezeit nullen koennen, ohne `asyncio.sleep`
+# prozessweit zu entschaerfen. `monkeypatch.setattr(<modul>.asyncio, "sleep", ...)`
+# sieht lokal aus, ersetzt `sleep` aber auf dem geteilten Modulobjekt -- fuer
+# httpx, respx, pytest-asyncio und jeden anderen Importeur im Prozess.
+#
+# Gilt vorerst nur fuer die Schleife in `_fetch_bytes_with_retry`; `uvg.py`
+# ruft weiterhin `asyncio.sleep` direkt und gehoert in denselben Zug wie die
+# uebrigen Server des Portfolios.
+_sleep = asyncio.sleep
 
 _HTTP_KWARGS: dict[str, Any] = {
     "timeout": HTTP_TIMEOUT,
@@ -88,9 +97,12 @@ async def lifespan(_server: FastMCP):
 mcp = FastMCP(
     "seco_labor_mcp",
     instructions=(
-        "Swiss labor market data server. Provides unemployment statistics, "
-        "job seeker data, open positions, and youth unemployment figures from "
-        "SECO/AMSTAT via opendata.swiss. All data is public and requires no API key. "
+        "Swiss labor market data server. Liefert die nationale Jahresreihe der "
+        "registrierten Arbeitslosen und Stellensuchenden (SECO-Zahlen, publiziert "
+        "vom BFS) sowie die UVG-Unfallstatistik. Monats- und Kantonswerte gibt es "
+        "zurzeit in keiner maschinenlesbaren Quelle; die betroffenen Werkzeuge "
+        "sagen das, statt eine nationale Zahl kantonal zu beschriften. "
+        "All data is public and requires no API key. "
         "Particularly useful for educational planning, vocational guidance (Berufswahlberatung), "
         "and apprenticeship market monitoring (Lehrstellen-Monitoring)."
     ),
@@ -103,9 +115,13 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 CKAN_BASE = "https://opendata.swiss/api/3/action"
-SECO_ORG = "staatssekretariat-fur-wirtschaft-seco"
 AMSTAT_BASE = "https://www.amstat.ch"
 ARBEIT_SWISS_BASE = "https://www.arbeit.swiss"
+
+# `SECO_ORG` ist am 2026-08-14 entfallen. Die Organisation existiert auf
+# opendata.swiss nicht mehr, und der Filter darauf machte aus jeder Suche eine
+# leere Antwort. Was an ihre Stelle tritt und warum kein anderer Herausgeber
+# einfach eingesetzt wurde, steht in `sources.py`.
 
 # Swiss canton codes mapping
 CANTON_CODES = {
@@ -396,160 +412,6 @@ def _pct(v: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CSV parser (defensive: no schema assumptions about SECO column names)
-# ---------------------------------------------------------------------------
-
-_CSV_TTL = timedelta(hours=24)
-# Cap the cache so a misbehaving caller iterating distinct URLs cannot grow it
-# without bound between TTL expiries. OrderedDict keeps FIFO insertion order so
-# we can pop the oldest entry on overflow.
-_CSV_CACHE_MAX = 50
-_CSV_CACHE: OrderedDict[str, tuple[datetime, str]] = OrderedDict()
-
-_PERIOD_RE = re.compile(r"\b(20\d{2})[-/.\s](0?[1-9]|1[0-2])\b")
-
-
-def _cache_put(url: str, text: str) -> None:
-    """Insert into _CSV_CACHE with bounded size (FIFO eviction)."""
-    _CSV_CACHE[url] = (datetime.now(), text)
-    while len(_CSV_CACHE) > _CSV_CACHE_MAX:
-        _CSV_CACHE.popitem(last=False)
-
-
-async def _fetch_text_cached(url: str) -> str | None:
-    """Fetch text with a 24 h TTL cache (bounded to _CSV_CACHE_MAX entries).
-    Tries UTF-8 then Windows-1252 (common for Swiss admin CSV exports).
-    Returns None on any failure (including SSRF policy rejection and
-    unexpected redirects).
-
-    Retries transient failures with the portfolio backoff 2s/4s/8s. Only 5xx,
-    429 and network errors are retried; 3xx and the remaining 4xx are answers,
-    not outages, and repeating them just costs the caller time.
-
-    A stale cache entry is deliberately *not* served after the retries are
-    exhausted: unlike the UVG envelopes, this path returns bare CSV text with
-    no provenance field, so the caller could not tell fresh data from old.
-    Returning None keeps the failure visible.
-    """
-    now = datetime.now()
-    cached = _CSV_CACHE.get(url)
-    if cached and now - cached[0] < _CSV_TTL:
-        return cached[1]
-
-    # Outside the retry loop: a rejected URL is a policy decision, and a second
-    # attempt would resolve DNS again for a target we already refused.
-    try:
-        await _validate_external_url(url)
-    except Exception:
-        return None
-
-    deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
-    last_error: Exception | None = None
-
-    for attempt in range(len(HTTP_BACKOFF_SECONDS) + 1):
-        if attempt:
-            delay = retry_policy.compute_delay(attempt, last_error)
-            # A wait that outlasts the budget is a wait for nobody: the caller
-            # has given up by the time it ends. Stop instead of sleeping.
-            if delay >= deadline - time.monotonic():
-                return None
-            await asyncio.sleep(delay)
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
-        try:
-            async with _client_scope() as client:
-                # httpx bounds each operation and restarts its read timeout
-                # with every chunk, so a slowly trickling CSV outlives a
-                # per-operation limit without any single read expiring.
-                # `asyncio.timeout` is the wall-clock bound the budget promises.
-                async with asyncio.timeout(remaining):
-                    resp = await client.get(url)
-                    resp.raise_for_status()
-                    payload = resp.content
-                try:
-                    text = payload.decode("utf-8")
-                except UnicodeDecodeError:
-                    text = payload.decode("cp1252", errors="replace")
-                _cache_put(url, text)
-                return text
-        except TimeoutError:  # the budget is gone, not just this attempt
-            return None
-        except httpx.HTTPStatusError as exc:
-            last_error = exc
-            code = exc.response.status_code
-            if not (code == 429 or 500 <= code < 600):
-                return None
-        except httpx.RequestError as exc:
-            last_error = exc
-            continue
-        except Exception:
-            # Decoding or cache errors are not transient.
-            return None
-    return None
-
-
-def _parse_csv(text: str) -> dict[str, Any]:
-    """Best-effort CSV parse: detect delimiter, return headers + all rows.
-    Returns {"parsed": False, ...} if the document is unreadable."""
-    sample = text[:4096]
-    try:
-        delimiter = _csv.Sniffer().sniff(sample, delimiters=";,\t|").delimiter
-    except _csv.Error:
-        # Heuristic fallback: German Excel CSV is ';', Anglo CSV is ','
-        delimiter = ";" if sample.count(";") > sample.count(",") else ","
-
-    try:
-        reader = _csv.reader(StringIO(text), delimiter=delimiter)
-        rows = [r for r in reader if r]  # drop empty lines
-    except Exception as exc:
-        return {"parsed": False, "reason": f"csv reader failed: {exc}"}
-
-    if len(rows) < 2:
-        return {"parsed": False, "reason": "fewer than 2 rows"}
-
-    return {
-        "parsed": True,
-        "delimiter": delimiter,
-        "headers": rows[0],
-        "rows": rows[1:],
-    }
-
-
-def _detect_latest_period(parsed: dict[str, Any]) -> str | None:
-    """Scan recent rows for a YYYY-MM token and return the latest one found."""
-    if not parsed.get("parsed"):
-        return None
-    found: set[tuple[int, int]] = set()
-    # Scan last 200 rows — enough to detect period without parsing the entire file
-    for row in parsed["rows"][-200:]:
-        for cell in row:
-            m = _PERIOD_RE.search(str(cell))
-            if m:
-                found.add((int(m.group(1)), int(m.group(2))))
-    if not found:
-        return None
-    y, mo = max(found)
-    return f"{y}-{mo:02d}"
-
-
-def _select_rows_for_canton(
-    parsed: dict[str, Any],
-    canton: str | None,
-    limit: int = 10,
-) -> list[list[str]]:
-    """Return up to `limit` most recent rows.
-    If `canton` is given, restrict to rows where any cell exactly matches the code."""
-    if not parsed.get("parsed"):
-        return []
-    rows = parsed["rows"]
-    if canton:
-        rows = [r for r in rows if any(c.strip() == canton for c in r)]
-    return rows[-limit:]
-
-
-# ---------------------------------------------------------------------------
 # CKAN helpers
 # ---------------------------------------------------------------------------
 
@@ -562,6 +424,15 @@ class UpstreamSchemaError(RuntimeError):
     Modell zurueckzugeben hiesse, ihm eine Handlung anzubieten, die es nicht
     gibt. Der Typ ist ``_to_execution_error`` unbekannt und wird deshalb
     weitergereicht — FastMCP macht daraus ``isError: true`` (OBS-001).
+    """
+
+
+class UpstreamUnreachableError(RuntimeError):
+    """Alle Versuche verbraucht oder das Budget abgelaufen.
+
+    Wie ``UpstreamSchemaError`` bewusst kein Ausfuehrungsfehler: ein anderer
+    Suchbegriff hilft gegen einen Netzausfall nicht. Der Typ ist
+    ``_to_execution_error`` unbekannt und wird weitergereicht (OBS-001).
     """
 
 
@@ -613,19 +484,113 @@ def _ckan_results(payload: object) -> list:
 
 
 async def _ckan_search(query: str, limit: int = 10) -> dict:
-    """Search opendata.swiss CKAN for SECO datasets."""
+    """Durchsucht opendata.swiss nach Arbeitsmarkt-Datensätzen.
+
+    Ohne Organisationsfilter, und das ist eine Aussage über die Quelle: SECO
+    ist auf opendata.swiss kein Herausgeber (mehr). Der frühere Filter auf
+    ``organization:staatssekretariat-fur-wirtschaft-seco`` traf deshalb nie
+    etwas und machte aus jeder Suche eine leere — Begründung und Messung
+    stehen in ``sources.py``.
+
+    Was der Ersatz *nicht* tut: so tun, als wären die Treffer SECO-Datensätze.
+    Jeder Treffer trägt seinen Herausgeber, und die Werkzeuge zeigen ihn an.
+    """
     async with _client_scope() as client:
         resp = await client.get(
             f"{CKAN_BASE}/package_search",
             params={
                 "q": query,
-                "fq": f"organization:{SECO_ORG}",
                 "rows": limit,
                 "sort": "score desc, metadata_modified desc",
             },
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def _fetch_bytes_with_retry(url: str) -> bytes:
+    """Holt eine Datei mit der Portfolio-Leiter 2s/4s/8s und dem Budget.
+
+    Ohne diese Schleife stand der Abruf der BFS-Tabelle nackt da: ein einziger
+    `client.get`. Der Asset-Host bricht die TLS-Verhandlung sporadisch ab —
+    beim Aufzeichnen der Fixtures zweimal in Folge —, und ein Werkzeug, das
+    daran scheitert, meldet «Quelle nicht erreichbar» für einen Aussetzer von
+    Sekunden.
+
+    Wiederholt werden 429, 5xx und Netzfehler. Ein 404 oder ein Umleitungscode
+    ist eine Antwort und kein Ausfall; ihn zu wiederholen kostet nur Zeit.
+    Anders als der frühere CSV-Pfad liefert diese Funktion keinen `None`-Wert
+    zurück, sondern reicht den letzten Fehler durch: der Aufrufer baut daraus
+    eine benannte Antwort, statt eine leere Reihe auszugeben.
+    """
+    await _validate_external_url(url)
+    deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
+    last_error: Exception | None = None
+
+    for attempt in range(len(HTTP_BACKOFF_SECONDS) + 1):
+        if attempt:
+            delay = retry_policy.compute_delay(attempt, last_error)
+            # Eine Wartezeit, die das Budget überdauert, wartet für niemanden.
+            if delay >= deadline - time.monotonic():
+                break
+            await _sleep(delay)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            async with _client_scope() as client, asyncio.timeout(remaining):
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.content
+        except TimeoutError as exc:  # Budget aufgebraucht, nicht nur dieser Versuch
+            last_error = exc
+            break
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            code = exc.response.status_code
+            if not (code == 429 or 500 <= code < 600):
+                raise
+        except httpx.RequestError as exc:
+            last_error = exc
+
+    raise UpstreamUnreachableError(
+        f"{url} nach {attempt + 1} Versuch(en) nicht erreichbar: "
+        # `str(last_error) or ...`, nicht `last_error or ...`: eine Ausnahme mit
+        # leerem `str()` ist trotzdem wahr, und `httpx.ConnectError`,
+        # `ConnectTimeout` und `ReadTimeout` haben genau das — also die Menge,
+        # die ein echter Ausfall erzeugt. Derselbe Fehler steckte bis 2026-08-07
+        # in `uvg.py` und liess den Satz nach dem Doppelpunkt enden.
+        f"{type(last_error).__name__}: {str(last_error) or 'kein weiterer Hinweis'}"
+    ) from last_error
+
+
+async def _bfs_jahresreihe() -> dict[str, Any]:
+    """Holt die gepinnte BFS-Tabelle und liest die drei SECO-Reihen daraus.
+
+    Zweistufig mit Absicht: erst ``package_show`` auf die gepinnte UUID, dann
+    die XLS-Ressource, die *dort* steht. Die Asset-URL des BFS wird damit
+    bewusst nicht zweitgepinnt — sie hängt an einer Asset-Nummer, die sich bei
+    jeder Neupublikation ändert. Gepinnt ist nur die Kennung, die stabil sein
+    soll; alles andere wird bei jedem Abruf frisch gelesen.
+    """
+    paket = await _ckan_get_dataset(sources.JAHRESREIHE.ckan_id)
+    ds = _ckan_result(paket, "package_show")
+    xls = next(
+        (r for r in ds.get("resources", []) if (r.get("format") or "").upper() in {"XLS", "XLSX"}),
+        None,
+    )
+    if xls is None or not xls.get("url"):
+        raise UpstreamSchemaError(
+            f"Datensatz {sources.JAHRESREIHE.slug!r} führt keine XLS-Ressource mehr. "
+            f"Vorhandene Formate: "
+            f"{sorted({r.get('format') for r in ds.get('resources', [])})}"
+        )
+    payload = await _fetch_bytes_with_retry(xls["url"])
+    daten = sources.parse_jahresreihe(payload)
+    daten["resource_url"] = xls["url"]
+    daten["dataset_modified"] = (ds.get("metadata_modified") or "")[:10]
+    return daten
 
 
 async def _ckan_get_dataset(dataset_id: str) -> dict:
@@ -652,14 +617,32 @@ def _extract_title(title_field: Any) -> str:
     return str(title_field) if title_field else ""
 
 
+def _herausgeber(ds: dict) -> str:
+    """Der Herausgeber eines Treffers, so wie CKAN ihn führt.
+
+    Wird bei jedem Treffer angezeigt, weil die Suche seit dem 2026-08-14 ohne
+    Organisationsfilter läuft: die Treffer stammen vom BFS, von Kantonen und
+    vom liechtensteinischen Amt für Statistik. Sie als «SECO-Datensätze» zu
+    zeigen wäre genau die Verwechslung, die dieser Umbau beheben soll.
+    """
+    org = ds.get("organization") or {}
+    titel = org.get("title")
+    if isinstance(titel, dict):
+        titel = titel.get("de") or titel.get("fr") or titel.get("en")
+    return str(titel or org.get("name") or "unbekannt")
+
+
 def _format_datasets_markdown(datasets: list[dict]) -> str:
     """Format CKAN dataset list as readable Markdown."""
     if not datasets:
-        return "Keine SECO-Datensätze gefunden."
+        return "Keine Datensätze gefunden."
 
     lines = [
-        "## SECO-Datensätze auf opendata.swiss\n",
+        "## Arbeitsmarkt-Datensätze auf opendata.swiss\n",
         f"*{len(datasets)} Datensätze gefunden*\n",
+        "> Die Suche läuft ohne Herausgeberfilter. SECO ist auf opendata.swiss kein\n"
+        "> Herausgeber; die Treffer stammen vom BFS, von Kantonen und weiteren Stellen.\n"
+        "> Der Herausgeber steht bei jedem Treffer — er entscheidet, was die Zahlen messen.\n",
     ]
     for ds in datasets:
         title = _extract_title(ds.get("title", ""))
@@ -670,6 +653,7 @@ def _format_datasets_markdown(datasets: list[dict]) -> str:
 
         lines.append(f"### {title}")
         lines.append(f"- **ID**: `{ds_id}`")
+        lines.append(f"- **Herausgeber**: {_herausgeber(ds)}")
         if modified:
             lines.append(f"- **Aktualisiert**: {modified}")
         if notes:
@@ -689,85 +673,15 @@ def _format_datasets_markdown(datasets: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def _try_live_csv(
-    datasets: list[dict],
-    *,
-    url_keywords: list[str] | None = None,
-    canton_filter: str | None = None,
-    sample_limit: int = 10,
-) -> dict[str, Any] | None:
-    """Walk CKAN datasets, fetch the first CSV resource whose URL matches one
-    of `url_keywords` (or any CSV if `url_keywords` is None) and that parses
-    cleanly. Returns a structured `live` dict ready for inclusion in a tool
-    response, or None if nothing usable was found.
-
-    Shared by seco_get_unemployment_overview, seco_get_youth_unemployment, and
-    seco_get_job_seekers — same defensive parsing semantics for all three."""
-    keywords_lower = [kw.lower() for kw in (url_keywords or [])]
-    for ds in datasets:
-        for resource in ds.get("resources", []):
-            fmt = (resource.get("format") or "").upper()
-            url = resource.get("url") or ""
-            if fmt != "CSV" or not url:
-                continue
-            if keywords_lower and not any(kw in url.lower() for kw in keywords_lower):
-                continue
-            text = await _fetch_text_cached(url)
-            if not text:
-                continue
-            parsed = _parse_csv(text)
-            if not parsed.get("parsed"):
-                continue
-            return {
-                "source_url": url,
-                "dataset_title": _extract_title(ds.get("title", "")),
-                "dataset_id": ds.get("name", ds.get("id", "")),
-                "headers": parsed["headers"],
-                "total_rows": len(parsed["rows"]),
-                "detected_period": _detect_latest_period(parsed),
-                "sample_rows": _select_rows_for_canton(parsed, canton_filter, limit=sample_limit),
-                "delimiter": parsed["delimiter"],
-            }
-    return None
-
-
-def _render_live_csv_markdown(live: dict[str, Any], canton_filter: str | None) -> list[str]:
-    """Render the live-CSV preview as Markdown lines. Shared by all three tools."""
-    period = live["detected_period"] or "unbekannt"
-    lines = [
-        f"### ✅ Live-Daten aus SECO-CSV (Periode: {period})\n"
-        f"**Quelle:** [{live['dataset_title']}]({live['source_url']})\n"
-        f"**Dataset-ID:** `{live['dataset_id']}` · "
-        f"**Zeilen gesamt:** {live['total_rows']}\n"
-    ]
-    headers = live["headers"]
-    sample = live["sample_rows"]
-    if sample:
-        lines.append(
-            f"**Letzte {len(sample)} Zeile(n)"
-            + (f" für Kanton {canton_filter}" if canton_filter else "")
-            + ":**\n"
-        )
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("|" + "|".join(["---"] * len(headers)) + "|")
-        for row in sample:
-            padded = (row + [""] * len(headers))[: len(headers)]
-            lines.append("| " + " | ".join(str(c) for c in padded) + " |")
-        lines.append("")
-    else:
-        lines.append(f"*Keine Zeilen mit Kanton-Code `{canton_filter}` in dieser CSV gefunden.*\n")
-    return lines
-
-
 # ---------------------------------------------------------------------------
-# Tool 1: Search SECO datasets on opendata.swiss
+# Tool 1: Arbeitsmarkt-Datensaetze auf opendata.swiss suchen
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(
     name="seco_search_datasets",
     annotations={
-        "title": "SECO-Datensätze suchen",
+        "title": "Arbeitsmarkt-Datensätze suchen",
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -775,11 +689,22 @@ def _render_live_csv_markdown(live: dict[str, Any], canton_filter: str | None) -
     },
 )
 async def seco_search_datasets(params: DatasetSearchInput) -> str:
-    """Search SECO labor market datasets on opendata.swiss CKAN.
+    """Sucht Arbeitsmarkt-Datensätze auf opendata.swiss.
 
-    Searches the Swiss Open Government Data portal for datasets published
-    by SECO (Staatssekretariat für Wirtschaft). Returns dataset titles,
-    IDs, and available resource download links.
+    **Nicht auf SECO gefiltert, und das ist eine Aussage über die Quelle.** Bis
+    zum 2026-08-14 filterte diese Suche auf `organization:staatssekretariat-
+    fur-wirtschaft-seco`. Diese Organisation existiert auf opendata.swiss nicht
+    (mehr): `organization_show` antwortet 404, und in den 176 Einträgen von
+    `organization_list` kommt kein SECO vor. Jede Suche lieferte deshalb null
+    Treffer — und ein Namensabgleich, der ins Leere läuft, sieht genau aus wie
+    eine leere Suche.
+
+    Die Suche läuft jetzt über den ganzen Bestand, und **jeder Treffer trägt
+    seinen Herausgeber**. Das ist die ehrlichere Antwort: Datensätze zum
+    Arbeitsmarkt gibt es, sie stammen nur vom BFS, von Kantonen und vom
+    liechtensteinischen Amt für Statistik. Wer sie verwendet, muss wissen, von
+    wem — die Erhebungsweise unterscheidet sich, und registrierte Arbeitslose
+    (SECO) sind nicht dasselbe wie Erwerbslose gemäss ILO (BFS).
 
     Args:
         params (DatasetSearchInput): Contains:
@@ -791,10 +716,12 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
         str: Dataset list with IDs and resource URLs, or JSON array of dataset objects.
 
     Example queries:
-        - 'arbeitslose kantone' → cantonal unemployment data
-        - 'Jugendarbeitslosigkeit' → youth unemployment datasets
-        - 'offene Stellen' → open positions
-        - 'Kurzarbeit' → short-time work data
+        - 'arbeitslose kantone' → kantonale Arbeitslosenzahlen (kantonale Portale)
+        - 'Kurzarbeit' → Kurzarbeitsentschädigung
+        - 'Erwerbslose ILO' → die BFS-Reihe
+
+    Hinweis: 'Jugendarbeitslosigkeit' liefert am 2026-08-14 portalweit null
+    Treffer. Das ist der Bestand und kein Fehler der Suche.
     """
     try:
         result = await _ckan_search(params.query, params.limit)
@@ -805,9 +732,11 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
 
     if not datasets:
         return (
-            f"Keine SECO-Datensätze für '{params.query}' gefunden.\n\n"
-            "Versuche alternative Suchbegriffe:\n"
-            "- 'Arbeitslosigkeit'\n- 'Stellensuchende'\n- 'Kurzarbeit'\n- 'Erwerbslosigkeit'"
+            f"Keine Datensätze für '{params.query}' auf opendata.swiss gefunden.\n\n"
+            "Die Suche läuft über den ganzen Bestand, nicht über einen Herausgeber — "
+            "eine leere Antwort heisst hier wirklich, dass es dazu nichts gibt.\n\n"
+            "Andere Begriffe, die etwas liefern:\n"
+            "- 'Arbeitslosigkeit'\n- 'Stellensuchende'\n- 'Kurzarbeit'\n- 'Erwerbslose ILO'"
         )
 
     if params.response_format == ResponseFormat.JSON:
@@ -817,6 +746,7 @@ async def seco_search_datasets(params: DatasetSearchInput) -> str:
                 {
                     "id": ds.get("name", ds.get("id", "")),
                     "title_de": _extract_title(ds.get("title", "")),
+                    "publisher": _herausgeber(ds),
                     "metadata_modified": (ds.get("metadata_modified") or "")[:10],
                     "resource_count": len(ds.get("resources", [])),
                     "resources": [
@@ -957,187 +887,172 @@ async def seco_get_dataset(params: DatasetDetailsInput) -> str:
     },
 )
 async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
-    """Get the latest Swiss unemployment statistics from SECO/AMSTAT.
+    """Registrierte Arbeitslose der Schweiz — SECO-Zahlen, publiziert vom BFS.
 
-    Fetches current unemployment data including national totals, rates,
-    year-over-year comparisons, and optionally cantonal breakdowns.
-    Data is sourced from SECO's published datasets on opendata.swiss.
+    Liefert die Jahresreihe der registrierten Arbeitslosen (Jahresdurchschnitt,
+    2000 bis heute) aus der BFS-Tabelle `T3.3.0.1`. Die Zahlen stammen aus
+    SECOs RAV-System; das BFS veröffentlicht sie und nennt SECO als Quelle.
+
+    **Was dieses Werkzeug nicht liefert:** monatliche Werte und kantonale
+    Aufschlüsselungen. Beide gibt es auf opendata.swiss nicht in
+    maschinenlesbarer Form — geprüft am 2026-08-14 über den ganzen Bestand.
+    Wer sie braucht, findet sie interaktiv auf amstat.ch. Eine Abfrage mit
+    `canton` bekommt deshalb eine Absage und keine national aggregierte Zahl,
+    die so aussieht, als wäre sie kantonal.
+
+    **Nicht mit der ILO-Erwerbslosigkeit verwechseln.** Dieselbe Tabelle führt
+    beide Reihen; die ILO-Zahl lag im Jahr 2000 um 76 Prozent höher. Das
+    Werkzeug gibt beide aus und beschriftet sie, statt sie zu vermischen.
 
     Args:
         params (UnemploymentInput): Contains:
-            - canton (Optional[str]): Canton code (e.g. 'ZH'). None = national.
-            - year (Optional[int]): Filter year. None = latest available.
-            - response_format (str): 'markdown' or 'json'
+            - canton (Optional[str]): wird abgelehnt, siehe oben.
+            - year (Optional[int]): Jahr der Reihe. None = jüngstes verfügbares.
+            - response_format (str): 'markdown' oder 'json'
 
     Returns:
-        str: Unemployment statistics with rates, absolute numbers,
-             and trend information. Useful for Berufswahlberatung context.
-
-    Schema (JSON format):
-        {
-            "period": "YYYY-MM",
-            "national": {
-                "unemployed_count": int,
-                "unemployment_rate_pct": float,
-                "change_vs_prev_month": int,
-                "change_vs_prev_year": int,
-                "seasonally_adjusted_rate_pct": float
-            },
-            "youth_15_24": {
-                "unemployed_count": int,
-                "change_vs_prev_month": int
-            },
-            "cantons": [
-                {"code": str, "name": str, "rate_pct": float, "count": int}
-            ],
-            "source": str,
-            "data_url": str
-        }
+        str: Jahreswerte mit Herkunftsangabe, oder eine benannte Absage.
     """
-    try:
-        # Search for the latest unemployment dataset
-        search_result = await _ckan_search("monatliche Arbeitslosenzahlen Kantone", limit=5)
-    except Exception as e:
-        return _to_execution_error(e)
-
-    datasets = _ckan_results(search_result)
-
     canton_filter = params.canton.upper() if params.canton else None
     if canton_filter and canton_filter not in CANTON_CODES:
         return (
             f"Error: Unknown canton code '{canton_filter}'. "
             f"Valid codes: {', '.join(sorted(CANTON_CODES.keys()))}"
         )
+    if canton_filter:
+        return _keine_kantonale_reihe(canton_filter, params.response_format)
 
-    live = await _try_live_csv(
-        datasets,
-        url_keywords=["arbeitslos"],
-        canton_filter=canton_filter,
-    )
+    try:
+        daten = await _bfs_jahresreihe()
+    except Exception as e:
+        return _to_execution_error(e)
 
-    # Build response with available data
-    canton_name = CANTON_CODES.get(canton_filter, canton_filter) if canton_filter else None
-    filter_desc = f"Kanton {canton_name} ({canton_filter})" if canton_name else "Schweiz national"
+    jahre = daten["years"]
+    jahr = params.year or jahre[-1]
+    if jahr not in jahre:
+        hinweis = (
+            f"Jahr {jahr} ist nicht in der Reihe. Verfügbar: {jahre[0]}–{jahre[-1]} "
+            "(Jahresdurchschnitte)."
+        )
+        return (
+            json.dumps({"error": hinweis}, ensure_ascii=False, indent=2)
+            if params.response_format == ResponseFormat.JSON
+            else f"**Kein Wert für {jahr}.** {hinweis}"
+        )
+
+    reihen = daten["series"]
+    arbeitslose = reihen["registrierte_arbeitslose"].get(jahr)
+    stellensuchende = reihen["registrierte_stellensuchende"].get(jahr)
+    ilo = reihen["erwerbslose_ilo"].get(jahr)
 
     if params.response_format == ResponseFormat.JSON:
-        result_data: dict[str, Any] = {
-            "query": {
-                "canton": canton_filter,
-                "canton_name": canton_name,
-                "year": params.year,
-                "filter": filter_desc,
-            },
-            "data_available": live is not None,
-        }
-        if live:
-            result_data["live"] = {
-                "data_source": "live_csv",
-                "reference_period": live["detected_period"],
-                "dataset_title": live["dataset_title"],
-                "dataset_id": live["dataset_id"],
-                "source_url": live["source_url"],
-                "headers": live["headers"],
-                "total_rows": live["total_rows"],
-                "sample_rows": live["sample_rows"],
-                "note": (
-                    "Best-effort parse of the SECO CSV. Headers and row order are "
-                    "preserved verbatim from the upstream resource — no canonical "
-                    "column mapping is assumed."
-                ),
-            }
-        else:
-            result_data["note"] = (
-                "Live CSV fetch/parse failed. Falling back to the static reference "
-                "snapshot below. Use seco_get_dataset with a dataset id from "
-                "seco_search_datasets to get the resource URL directly."
-            )
-            result_data["reference_snapshot"] = {
-                "data_source": "static_reference",
-                "reference_period": "2025-12",
-                "snapshot_taken": "2026-01-09",
-                "warning": (
-                    "STATIC reference values from the December 2025 SECO press release. "
-                    "They are NOT fetched live and may be outdated."
-                ),
-                "verify_live_at": (
-                    "https://www.arbeit.swiss/secoalv/de/home/menue/"
-                    "institutionen-medien/medienmitteilungen.html"
-                ),
-                "national": {
-                    "unemployed": 147275,
-                    "rate_pct": 3.2,
-                    "seasonally_adjusted_rate_pct": 3.0,
-                    "year_avg_2025_rate_pct": 2.8,
-                    "youth_15_24_count_approx": "available in monthly data",
+        return json.dumps(
+            {
+                "year": jahr,
+                "unit": sources.JAHRESREIHE.einheit,
+                "registrierte_arbeitslose_seco": arbeitslose,
+                "registrierte_stellensuchende_seco": stellensuchende,
+                "erwerbslose_ilo_bfs": ilo,
+                "series_labels": daten["labels"],
+                "years_available": [jahre[0], jahre[-1]],
+                "granularity": "annual_national",
+                "not_available": {
+                    "monthly": "keine maschinenlesbare Quelle (Stand 2026-08-14)",
+                    "cantonal": "keine maschinenlesbare Quelle (Stand 2026-08-14)",
+                    "where": "https://www.amstat.ch/v2/amstat_de.html",
                 },
-            }
-        return json.dumps(result_data, ensure_ascii=False, indent=2)
-
-    # Markdown response
-    lines = [f"## Arbeitslosigkeit {filter_desc}\n"]
-
-    if live:
-        lines.extend(_render_live_csv_markdown(live, canton_filter))
-    else:
-        lines.extend(
-            [
-                "> ⚠️ **Hinweis zur Datenherkunft**: Live-CSV-Abruf fehlgeschlagen. "
-                "Die folgenden Zahlen sind ein **statischer Referenz-Snapshot** vom Dezember 2025 "
-                "(SECO-Pressemitteilung 2026-01-09). Für aktuelle Werte siehe den Link am Ende.\n",
-                "### Referenz-Snapshot (Dezember 2025, statisch)\n",
-                "| Kennzahl | Wert |",
-                "|----------|------|",
-                "| Arbeitslose (total) | 147'275 |",
-                "| Arbeitslosenquote | 3.2% |",
-                "| Saisonbereinigte Quote | 3.0% |",
-                "| Veränd. vs. Vormonat | +3'648 (+2.7%) |",
-                "| Veränd. vs. Vorjahr | +17'746 (+14.7%) |",
-                "| Jahresdurchschnitt 2025 | 2.8% |",
-            ]
+                "source": sources.herkunftszeile(),
+                "data_url": daten["resource_url"],
+                "dataset_modified": daten["dataset_modified"],
+                "warning": (
+                    "Registrierte Arbeitslose (SECO) und Erwerbslose gemäss ILO (BFS) "
+                    "sind verschiedene Statistiken und nicht austauschbar."
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
         )
 
-    if datasets:
-        lines.append("\n### Gefundene Datensätze für Detail-Downloads\n")
-        for ds in datasets[:3]:
-            title = _extract_title(ds.get("title", ""))
-            ds_id = ds.get("name", ds.get("id", ""))
-            lines.append(f"- **{title}** → ID: `{ds_id}`")
+    def _fmt(wert: float | None) -> str:
+        return f"{wert * 1000:,.0f}".replace(",", "'") if wert is not None else "–"
 
-    # Show the hardcoded April 2025 cantonal ranking only as a fallback;
-    # when live data is present, it would confuse the reader.
-    if not live:
-        lines.append(
-            "\n### Kantone mit höchster Arbeitslosigkeit "
-            "(statischer Snapshot April 2025 – nicht live)\n"
-        )
-        lines.append("| Kanton | Quote |")
-        lines.append("|--------|-------|")
-        cantonal_data = [
-            ("JU", "Jura", 4.8),
-            ("GE", "Genève", 4.5),
-            ("NE", "Neuchâtel", 4.2),
-            ("VD", "Vaud", 3.8),
-            ("TI", "Ticino", 3.5),
-        ]
-        for code, name, rate in cantonal_data:
-            marker = " ◀" if canton_filter == code else ""
-            lines.append(f"| {code} – {name} | {rate}%{marker} |")
-
-        if canton_filter and canton_filter not in [c[0] for c in cantonal_data]:
-            lines.append(
-                f"\n*Für genaue Daten zu Kanton {canton_name}: verwende seco_get_dataset.*"
-            )
-
-    lines.append(
-        "\n---\n"
-        "**Datenquellen**:\n"
-        "- [SECO Monatsbericht](https://www.arbeit.swiss/secoalv/de/home/menue/institutionen-medien/medienmitteilungen.html)\n"
-        "- [opendata.swiss – SECO-Datensätze](https://opendata.swiss/de/dataset?q=seco)\n"
-        "- [amstat.ch – Arbeitsmarktstatistik](https://www.amstat.ch/v2/amstat_de.html)\n\n"
-        "*Tipp: Verwende `seco_search_datasets` mit 'Kantone' oder 'Berufsgruppen' für spezifischere Daten.*"
-    )
-
+    lines = [
+        f"## Registrierte Arbeitslose Schweiz — {jahr}\n",
+        f"*{sources.JAHRESREIHE.einheit}, national*\n",
+        "| Reihe | Wert |",
+        "|---|---|",
+        f"| Registrierte Arbeitslose (SECO) | {_fmt(arbeitslose)} |",
+        f"| Registrierte Stellensuchende (SECO) | {_fmt(stellensuchende)} |",
+        f"| Erwerbslose gemäss ILO (BFS) | {_fmt(ilo)} |",
+        "",
+        "> Die drei Reihen messen **nicht dasselbe**. Registrierte Arbeitslose sind",
+        "> beim RAV gemeldet; die ILO-Erwerbslosigkeit stammt aus einer Befragung und",
+        "> liegt regelmässig deutlich höher. Nicht ineinander umrechnen.",
+        "",
+        f"Reihe verfügbar: {jahre[0]}–{jahre[-1]} (Jahresdurchschnitte).",
+        "",
+        "### Was hier fehlt",
+        "",
+        "Monatswerte und kantonale Aufschlüsselungen gibt es auf opendata.swiss",
+        "nicht maschinenlesbar (geprüft 2026-08-14). Interaktiv stehen sie auf",
+        "[amstat.ch](https://www.amstat.ch/v2/amstat_de.html); der Monatsbericht",
+        "liegt als PDF auf [arbeit.swiss](https://www.arbeit.swiss/de/informationszentrum/arbeitsmarktstatistik-schweiz).",
+        "",
+        "---",
+        f"{sources.herkunftszeile()}",
+        f"Datensatz zuletzt geändert: {daten['dataset_modified']}",
+    ]
     return "\n".join(lines)
+
+
+def _keine_kantonale_reihe(kanton: str, format_: ResponseFormat) -> str:
+    """Eine benannte Absage statt einer national aggregierten Zahl.
+
+    Die frühere Fassung zeigte hier eine fest eingetragene Rangliste vom April
+    2025 — fünf Kantone, feste Quoten, mit Warnhinweis. Ein Warnhinweis neben
+    einer Zahl verliert gegen die Zahl: gelesen wird die Quote, nicht der
+    Hinweis. Eine Absage kann man nicht falsch zitieren.
+    """
+    name = CANTON_CODES.get(kanton, kanton)
+    quellen = (
+        "https://www.amstat.ch/v2/amstat_de.html",
+        "https://www.arbeit.swiss/de/informationszentrum/arbeitsmarktstatistik-schweiz",
+    )
+    if format_ == ResponseFormat.JSON:
+        return json.dumps(
+            {
+                "canton": kanton,
+                "canton_name": name,
+                "data_available": False,
+                "reason": (
+                    "Für kantonale Arbeitslosenzahlen gibt es auf opendata.swiss keine "
+                    "maschinenlesbare Quelle (geprüft 2026-08-14). Die nationale "
+                    "Jahresreihe steht ohne `canton` zur Verfügung."
+                ),
+                "where": list(quellen),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    return "\n".join(
+        [
+            f"## Kanton {name} ({kanton}) — keine Daten\n",
+            "Für **kantonale** Arbeitslosenzahlen gibt es auf opendata.swiss keine",
+            "maschinenlesbare Quelle (geprüft 2026-08-14). Dieses Werkzeug gibt",
+            "deshalb keine Zahl aus — eine national aggregierte Zahl an dieser Stelle",
+            "wäre als kantonale zu lesen und damit falsch.",
+            "",
+            "Die nationale Jahresreihe liefert dieses Werkzeug ohne `canton`.",
+            "",
+            "Kantonale Werte gibt es interaktiv auf",
+            f"[amstat.ch]({quellen[0]}) und im Monatsbericht auf",
+            f"[arbeit.swiss]({quellen[1]}).",
+            "",
+            "Einzelne Kantone publizieren eigene Reihen auf ihren Portalen; mit",
+            "`seco_search_datasets` nach dem Kantonsnamen suchen. Herausgeber und",
+            "Erhebungsweise unterscheiden sich dort je Kanton.",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1156,35 +1071,31 @@ async def seco_get_unemployment_overview(params: UnemploymentInput) -> str:
     },
 )
 async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
-    """Get youth unemployment data (15–24 year olds) from SECO/AMSTAT.
+    """Jugendarbeitslosigkeit (15–24) — zurzeit ohne maschinenlesbare Quelle.
 
-    Especially relevant for educational planning, vocational guidance
-    (Berufswahlberatung), and apprenticeship market monitoring.
-    Shows trends in youth employment to inform school and career counseling.
+    **Dieses Werkzeug liefert keine Zahlen.** Eine Suche über den ganzen
+    Bestand von opendata.swiss nach «Jugendarbeitslosigkeit» ergab am
+    2026-08-14 **null** Datensätze; auch die Umschreibungen nach Alter und
+    Altersgruppen führen zu keiner Reihe, die 15–24-Jährige als registrierte
+    Arbeitslose ausweist. SECO erhebt die Zahl und zeigt sie auf amstat.ch,
+    veröffentlicht sie aber nirgends maschinenlesbar.
+
+    Was es stattdessen gibt: die Einordnung, die eine Zahl brauchbar macht —
+    das saisonale Muster und was daraus für die Bildungsplanung folgt. Das ist
+    Fachwissen und keine Messung, und es steht hier als solches.
+
+    Die frühere Fassung nannte an dieser Stelle «+2'186 Jugendarbeitslose
+    (+18.6%)» als Beispielwert aus einem Snapshot. Eine als Beispiel
+    eingeführte Zahl wird als Zahl zitiert; der Zusatz «Snapshot» überlebt das
+    Zitieren nicht.
 
     Args:
         params (YouthUnemploymentInput): Contains:
-            - canton (Optional[str]): Canton code (e.g. 'ZH'). None = national.
-            - response_format (str): 'markdown' or 'json'
+            - canton (Optional[str]): Kantonscode; ändert am Ergebnis nichts.
+            - response_format (str): 'markdown' oder 'json'
 
     Returns:
-        str: Youth unemployment statistics including:
-            - Absolute numbers (15–24 Jährige Arbeitslose)
-            - Month-over-month changes
-            - Year-over-year changes
-            - Contextual interpretation for educational planning
-
-    Schema (JSON):
-        {
-            "period": "YYYY-MM",
-            "youth_15_24": {
-                "unemployed_count": int,
-                "change_vs_prev_month": int,
-                "change_pct_vs_prev_month": float
-            },
-            "context_education": str,
-            "source": str
-        }
+        str: Eine benannte Absage samt Bezugsquellen und fachlicher Einordnung.
     """
     canton_filter = params.canton.upper() if params.canton else None
     if canton_filter and canton_filter not in CANTON_CODES:
@@ -1192,138 +1103,76 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
             f"Error: Unknown canton code '{canton_filter}'. "
             f"Valid codes: {', '.join(sorted(CANTON_CODES.keys()))}"
         )
-
     canton_name = CANTON_CODES.get(canton_filter, canton_filter) if canton_filter else None
     scope = f"Kanton {canton_name} ({canton_filter})" if canton_name else "Schweiz national"
 
-    # Try to fetch youth unemployment dataset from opendata.swiss
-    try:
-        search_result = await _ckan_search("Jugendarbeitslose Alter", limit=5)
-        datasets = _ckan_results(search_result)
-    except Exception:
-        datasets = []
-
-    live = await _try_live_csv(
-        datasets,
-        url_keywords=["jugend", "alter", "altersgruppe", "arbeitslos"],
-        canton_filter=canton_filter,
-    )
+    quellen = {
+        "amstat": "https://www.amstat.ch/v2/amstat_de.html",
+        "monatsbericht": (
+            "https://www.arbeit.swiss/de/informationszentrum/arbeitsmarktstatistik-schweiz"
+        ),
+    }
+    saison = [
+        "Juli/August: Anstieg — Schulabgängerinnen und Schulabgänger ohne Anschlusslösung",
+        "September–November: Rückgang — Lehrstellenantritt und neue Ausbildungen",
+        "Die Restgrösse nach November ist das Signal, nicht der Ausschlag im August",
+    ]
 
     if params.response_format == ResponseFormat.JSON:
-        data_block: dict[str, Any]
-        if live:
-            data_block = {
-                "data_source": "live_csv",
-                "reference_period": live["detected_period"],
-                "dataset_title": live["dataset_title"],
-                "dataset_id": live["dataset_id"],
-                "source_url": live["source_url"],
-                "headers": live["headers"],
-                "total_rows": live["total_rows"],
-                "sample_rows": live["sample_rows"],
-                "note": (
-                    "Best-effort parse of the SECO youth-related CSV. Headers "
-                    "are preserved verbatim — no canonical column mapping is "
-                    "assumed."
-                ),
-            }
-        else:
-            data_block = {
-                "reference_snapshot": {
-                    "data_source": "static_reference",
-                    "reference_period": "2025-12",
-                    "warning": (
-                        "Live CSV fetch/parse failed. Static reference values, "
-                        "NOT fetched live. For current monthly figures, follow "
-                        "verify_live_at."
-                    ),
-                    "verify_live_at": "https://www.amstat.ch/v2/amstat_de.html",
-                    "example_youth_15_24": (
-                        "August 2025 (Snapshot): +2'186 Jugendarbeitslose vs. Vormonat (+18.6%)."
-                    ),
-                },
-                "seasonal_pattern": (
-                    "Saisonal: Anstieg Juli/August (Schulabgänger), "
-                    "Rückgang Herbst (Lehrstellenantritt)"
-                ),
-            }
         return json.dumps(
             {
                 "scope": scope,
-                "canton": canton_filter,
-                "data": data_block,
-                "datasets_found": [
-                    {
-                        "id": ds.get("name", ""),
-                        "title": _extract_title(ds.get("title", "")),
-                    }
-                    for ds in datasets[:3]
-                ],
-                "education_context": {
-                    "relevance": "Hoch für Schulamt und Berufswahlberatung",
-                    "key_indicators": [
-                        "Jugendarbeitslose 15-24 (RAV-registriert)",
-                        "Saisonales Muster Sommer/Herbst",
-                        "Branchen mit hoher Jugendarbeitslosigkeit",
-                        "Kantone mit kritischen Quoten",
-                    ],
-                    "policy_link": "Stellenmeldepflicht ab 5% Arbeitslosenquote pro Berufsart",
-                },
+                "data_available": False,
+                "reason": (
+                    "Keine maschinenlesbare Quelle für registrierte Jugendarbeitslose "
+                    "(15–24) auf opendata.swiss — Suche über den Gesamtbestand am "
+                    "2026-08-14: 0 Datensätze. SECO erhebt die Zahl und zeigt sie "
+                    "interaktiv auf amstat.ch."
+                ),
+                "where": quellen,
+                "seasonal_pattern_qualitative": saison,
+                "note": (
+                    "Das saisonale Muster ist fachliche Einordnung, keine Messung. "
+                    "Dieses Werkzeug gibt bewusst keine Beispielzahlen aus."
+                ),
             },
             ensure_ascii=False,
             indent=2,
         )
 
-    # Markdown – optimized for Schulamt/Berufswahlberatung use
-    lines = [
-        f"## Jugendarbeitslosigkeit (15–24 Jahre) – {scope}\n",
-        "> *Direkt relevant für Berufswahlberatung, Lehrstellenmonitoring und Bildungsplanung*\n",
-    ]
-    if live:
-        lines.extend(_render_live_csv_markdown(live, canton_filter))
-    else:
-        lines.append(
-            "> ⚠️ **Hinweis**: Live-CSV-Abruf fehlgeschlagen. Konkrete Zahlen unten sind "
-            "ein **statischer Referenz-Snapshot** (Dezember 2025) – nicht live abgefragt. "
-            "Für aktuelle Werte siehe Datenquellen am Ende.\n"
-        )
-    lines.extend(
+    return "\n".join(
         [
-            "### Saisonales Muster (allgemein gültig)\n",
-            "Die SECO-Monatsdaten weisen jeweils die Zahl der Jugendarbeitslosen (15–24 Jährige) aus.",
-            "Diese Gruppe ist für das Schulamt besonders relevant:\n",
-            "**Saisonales Muster:**",
-            "- **Juli/August**: starker Anstieg (Schulabgänger ohne Anschlusslösung)",
-            "  - Beispielwert (Snapshot Aug 2025): +2'186 Jugendarbeitslose (+18.6% vs. Vormonat)",
-            "- **September–November**: deutlicher Rückgang (Lehrstellenantritt, neue Ausbildungen)",
-            "- Dies ist ein natürlicher Rhythmus – aber die Residualgrösse signalisiert Handlungsbedarf\n",
-            "### Interpretation für die Bildungsplanung\n",
-            "| Indikator | Bedeutung für Schulamt |",
-            "|-----------|------------------------|",
-            "| Hohe Aug-Quote in Berufsgruppe X | → Mehr Unterstützung in Brückenangeboten |",
-            "| Steigende Jahresquote 15-24 | → Stärken der Berufswahlvorbereitung |",
-            "| Kanton ZH über Schweizer Schnitt | → Interventionsbedarf RAV-Zusammenarbeit |",
-            "| Stellenmeldepflicht-Berufe | → Fokus in Berufsberatung auf diese Berufe |",
+            f"## Jugendarbeitslosigkeit (15–24) — {scope}\n",
+            "**Keine Zahlen verfügbar.** Für registrierte Jugendarbeitslose gibt es",
+            "auf opendata.swiss keine maschinenlesbare Quelle: die Suche über den",
+            "Gesamtbestand ergab am 2026-08-14 null Datensätze. SECO erhebt die Zahl",
+            "und zeigt sie interaktiv auf amstat.ch, publiziert sie aber nicht als",
+            "Datei.",
+            "",
+            "Dieses Werkzeug gibt deshalb keine Beispiel- oder Referenzwerte aus. Eine",
+            "als Beispiel eingeführte Zahl wird als Zahl zitiert.",
+            "",
+            "### Wo die Zahlen stehen",
+            "",
+            f"- [amstat.ch – Arbeitslose nach Alter]({quellen['amstat']}) (interaktiv)",
+            f"- [Monatsbericht «Die Lage auf dem Arbeitsmarkt»]({quellen['monatsbericht']}) (PDF)",
+            "",
+            "### Saisonales Muster (fachliche Einordnung, keine Messung)",
+            "",
+            *[f"- {s}" for s in saison],
+            "",
+            "### Was daraus für die Bildungsplanung folgt",
+            "",
+            "| Beobachtung | Bedeutung für das Schulamt |",
+            "|---|---|",
+            "| Hohe August-Quote in einer Berufsgruppe | Brückenangebote in dieser Richtung stärken |",
+            "| Steigende Jahresquote 15–24 | Berufswahlvorbereitung früher ansetzen |",
+            "| Kanton über dem Schweizer Schnitt | Zusammenarbeit mit dem RAV prüfen |",
+            "| Beruf mit Stellenmeldepflicht | in der Beratung eigens ansprechen |",
+            "",
+            "Diese Zeilen sind Lesehilfen für eigene Zahlen — sie ersetzen sie nicht.",
         ]
     )
-
-    if datasets:
-        lines.append("\n### Verfügbare SECO-Datensätze (für Detailanalyse)\n")
-        for ds in datasets[:3]:
-            title = _extract_title(ds.get("title", ""))
-            ds_id = ds.get("name", ds.get("id", ""))
-            lines.append(f"- **{title}** → `seco_get_dataset('{ds_id}')`")
-
-    lines.append(
-        "\n### Datenquellen\n"
-        "- [SECO Monatspresse](https://www.seco.admin.ch/seco/de/home/Arbeit/"
-        "Arbeitslosenversicherung/arbeitslosenzahlen.html)\n"
-        "- [amstat.ch – Arbeitslose nach Alter](https://www.amstat.ch/v2/amstat_de.html)\n\n"
-        "*Für Rohdaten: `seco_search_datasets('Jugendarbeitslose')` oder "
-        "`seco_search_datasets('Alter Altersgruppen')`*"
-    )
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1342,21 +1191,26 @@ async def seco_get_youth_unemployment(params: YouthUnemploymentInput) -> str:
     },
 )
 async def seco_get_job_seekers(params: JobSeekersInput) -> str:
-    """Get job seeker (Stellensuchende) statistics from SECO/AMSTAT.
+    """Registrierte Stellensuchende — SECO-Zahlen, publiziert vom BFS.
 
-    Stellensuchende is a broader category than unemployed (Arbeitslose) –
-    it includes people in retraining programs, temporary employment programs,
-    and other ALV programs. Important for understanding the full scope of
-    labor market challenges.
+    Stellensuchende ist die weitere Kategorie: sie schliesst Personen in
+    Umschulung, Beschäftigungsprogrammen und anderen ALV-Massnahmen ein, die
+    nicht als arbeitslos gezählt werden. Der Abstand zwischen beiden Reihen ist
+    die eigentliche Aussage — er sagt, wie viele Menschen das System gerade
+    begleitet, ohne dass sie in der Arbeitslosenquote auftauchen.
+
+    Dieselbe Tabelle wie `seco_get_unemployment_overview` (BFS `T3.3.0.1`),
+    Jahresdurchschnitte ab 2000, national. Kantonale und monatliche Werte gibt
+    es dort nicht; `canton` bekommt deshalb eine Absage statt einer nationalen
+    Zahl im kantonalen Gewand.
 
     Args:
         params (JobSeekersInput): Contains:
-            - canton (Optional[str]): Canton code (e.g. 'ZH'). None = national.
-            - response_format (str): 'markdown' or 'json'
+            - canton (Optional[str]): wird abgelehnt, siehe oben.
+            - response_format (str): 'markdown' oder 'json'
 
     Returns:
-        str: Job seeker statistics with comparison to unemployment figures
-             and contextual information for educational/vocational planning.
+        str: Jahreswerte beider Reihen samt Abstand, mit Herkunftsangabe.
     """
     canton_filter = params.canton.upper() if params.canton else None
     if canton_filter and canton_filter not in CANTON_CODES:
@@ -1364,100 +1218,77 @@ async def seco_get_job_seekers(params: JobSeekersInput) -> str:
             f"Error: Unknown canton code '{canton_filter}'. "
             f"Valid codes: {', '.join(sorted(CANTON_CODES.keys()))}"
         )
-
-    canton_name = CANTON_CODES.get(canton_filter, canton_filter) if canton_filter else None
-    scope = f"Kanton {canton_name} ({canton_filter})" if canton_name else "Schweiz national"
+    if canton_filter:
+        return _keine_kantonale_reihe(canton_filter, params.response_format)
 
     try:
-        search_result = await _ckan_search("Stellensuchende Kantone", limit=5)
-        datasets = _ckan_results(search_result)
-    except Exception:
-        datasets = []
+        daten = await _bfs_jahresreihe()
+    except Exception as e:
+        return _to_execution_error(e)
 
-    live = await _try_live_csv(
-        datasets,
-        url_keywords=["stellensuch", "arbeitslos"],
-        canton_filter=canton_filter,
+    jahre = daten["years"]
+    jahr = jahre[-1]
+    stellensuchende = daten["series"]["registrierte_stellensuchende"].get(jahr)
+    arbeitslose = daten["series"]["registrierte_arbeitslose"].get(jahr)
+    differenz = (
+        stellensuchende - arbeitslose
+        if stellensuchende is not None and arbeitslose is not None
+        else None
     )
 
     if params.response_format == ResponseFormat.JSON:
-        payload: dict[str, Any] = {
-            "scope": scope,
-            "canton": canton_filter,
-            "concept_note": (
-                "Stellensuchende > Arbeitslose: Stellensuchende umfasst ALLE "
-                "beim RAV gemeldeten Personen (inkl. Umschulung, vorübergehende Beschäftigung)."
-            ),
-            "datasets_found": [
-                {
-                    "id": ds.get("name", ""),
-                    "title": _extract_title(ds.get("title", "")),
-                    "resources": len(ds.get("resources", [])),
-                }
-                for ds in datasets[:3]
-            ],
-            "source": "SECO Arbeitsmarktstatistik – www.amstat.ch",
-        }
-        if live:
-            payload["live"] = {
-                "data_source": "live_csv",
-                "reference_period": live["detected_period"],
-                "dataset_title": live["dataset_title"],
-                "dataset_id": live["dataset_id"],
-                "source_url": live["source_url"],
-                "headers": live["headers"],
-                "total_rows": live["total_rows"],
-                "sample_rows": live["sample_rows"],
-                "note": (
-                    "Best-effort parse of a SECO job-seeker CSV. Headers are "
-                    "preserved verbatim — no canonical column mapping is assumed."
-                ),
-            }
-        else:
-            payload["reference_snapshot"] = {
-                "data_source": "static_reference",
-                "reference_period": "2025-12",
-                "warning": "Live CSV fetch/parse failed. Static snapshot. Verify at amstat.ch.",
-                "stellensuchende_approx": 233900,
-                "arbeitslose_approx": 149000,
-            }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
-
-    lines = [f"## Stellensuchende – {scope}\n"]
-    if live:
-        lines.extend(_render_live_csv_markdown(live, canton_filter))
-    else:
-        lines.append(
-            "> ⚠️ **Hinweis**: Live-CSV-Abruf fehlgeschlagen. Konkrete Zahlen unten sind "
-            "ein **statischer Snapshot** (Dez 2025), nicht live. "
-            "Aktuelle Werte unter [amstat.ch](https://www.amstat.ch/v2/amstat_de.html).\n"
+        return json.dumps(
+            {
+                "year": jahr,
+                "unit": sources.JAHRESREIHE.einheit,
+                "registrierte_stellensuchende_seco": stellensuchende,
+                "registrierte_arbeitslose_seco": arbeitslose,
+                "differenz_in_massnahmen": differenz,
+                "series_labels": daten["labels"],
+                "years_available": [jahre[0], jahre[-1]],
+                "granularity": "annual_national",
+                "not_available": {
+                    "monthly": "keine maschinenlesbare Quelle (Stand 2026-08-14)",
+                    "cantonal": "keine maschinenlesbare Quelle (Stand 2026-08-14)",
+                    "where": "https://www.amstat.ch/v2/amstat_de.html",
+                },
+                "source": sources.herkunftszeile(),
+                "data_url": daten["resource_url"],
+            },
+            ensure_ascii=False,
+            indent=2,
         )
-    lines.extend(
+
+    def _fmt(wert: float | None) -> str:
+        return f"{wert * 1000:,.0f}".replace(",", "'") if wert is not None else "–"
+
+    anteil = (
+        f"{differenz / stellensuchende * 100:.0f}%"
+        if differenz is not None and stellensuchende
+        else "–"
+    )
+    return "\n".join(
         [
-            "### Konzept: Stellensuchende vs. Arbeitslose\n",
-            "> **Eselsbrücke**: Arbeitslose ⊂ Stellensuchende (Teilmenge!)\n",
-            "Die Stellensuchendenquote ist immer **höher** als die Arbeitslosenquote:\n",
-            "| Kategorie | Snapshot Dez 2025 | Einschlusskriterium |",
-            "|-----------|-------------------|---------------------|",
-            "| Arbeitslose | ~149'000 (3.2%) | Sofort vermittelbar, ohne Stelle |",
-            "| Stellensuchende | ~233'900 | Alle RAV-Gemeldeten inkl. Programme |",
-            "| Differenz | ~84'900 | In Umschulung, vorübergehender Beschäftigung etc. |\n",
-            "### Bedeutung für Bildungsplanung\n",
-            "Die Differenz (84'900 Personen) ist in **Qualifizierungsmassnahmen** –",
-            "ein Signal für den Weiterbildungsbedarf und die Nachfrage nach",
-            "Brückenangeboten, Umschulungen und berufsbegleitenden Ausbildungen.",
+            f"## Registrierte Stellensuchende Schweiz — {jahr}\n",
+            f"*{sources.JAHRESREIHE.einheit}, national*\n",
+            "| Reihe | Wert |",
+            "|---|---|",
+            f"| Registrierte Stellensuchende (SECO) | {_fmt(stellensuchende)} |",
+            f"| davon registrierte Arbeitslose (SECO) | {_fmt(arbeitslose)} |",
+            f"| Differenz: in Massnahmen oder Zwischenverdienst | {_fmt(differenz)} ({anteil}) |",
+            "",
+            "> Die Differenz ist die eigentliche Aussage dieser Reihe: Menschen, die das",
+            "> System begleitet, ohne dass sie in der Arbeitslosenquote erscheinen.",
+            "",
+            f"Reihe verfügbar: {jahre[0]}–{jahre[-1]} (Jahresdurchschnitte).",
+            "Monats- und Kantonswerte sind nicht maschinenlesbar verfügbar",
+            "(geprüft 2026-08-14) — interaktiv auf",
+            "[amstat.ch](https://www.amstat.ch/v2/amstat_de.html).",
+            "",
+            "---",
+            f"{sources.herkunftszeile()}",
         ]
     )
-
-    if datasets:
-        lines.append("\n### Datensätze auf opendata.swiss\n")
-        for ds in datasets[:3]:
-            title = _extract_title(ds.get("title", ""))
-            ds_id = ds.get("name", ds.get("id", ""))
-            lines.append(f"- **{title}** → ID: `{ds_id}`")
-
-    lines.append("\n*Für Rohdaten: `seco_search_datasets('Stellensuchende')`*")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1511,10 +1342,17 @@ async def seco_get_open_positions(params: OpenPositionsInput) -> str:
                     ),
                     "source": "SECO – Stellenmeldepflicht",
                 },
+                "data_available": False,
+                "reason": (
+                    "Keine maschinenlesbare nationale Reihe für gemeldete offene "
+                    "Stellen auf opendata.swiss (geprüft 2026-08-14). Einzelne "
+                    "Kantone publizieren eigene Reihen; siehe datasets_found."
+                ),
                 "datasets_found": [
                     {
                         "id": ds.get("name", ""),
                         "title": _extract_title(ds.get("title", "")),
+                        "publisher": _herausgeber(ds),
                     }
                     for ds in datasets[:3]
                 ],
@@ -1524,7 +1362,12 @@ async def seco_get_open_positions(params: OpenPositionsInput) -> str:
         )
 
     lines = [
-        "## Offene Stellen – Schweiz (SECO/AMSTAT)\n",
+        "## Offene Stellen – Schweiz\n",
+        "> **Keine nationale Reihe verfügbar.** Für gemeldete offene Stellen gibt es",
+        "> auf opendata.swiss keine maschinenlesbare nationale Quelle (geprüft",
+        "> 2026-08-14). Einzelne Kantone publizieren eigene Reihen — siehe die",
+        "> Trefferliste unten, mit Herausgeber. Was hier steht, ist die Einordnung",
+        "> des Indikators, keine Messung.\n",
         "> **Eselsbrücke**: Offene Stellen = Thermometer des Arbeitsmarkts.",
         "> Steigt die Temperatur → mehr Nachfrage; sinkt sie → Abkühlung.\n",
         "### Strategische Bedeutung für Berufsberatung\n",
@@ -1705,9 +1548,12 @@ async def seco_get_unemployment_by_occupation(params: OccupationInput) -> str:
     if params.response_format == ResponseFormat.JSON:
         return json.dumps(
             {
+                "data_available": False,
                 "note": (
-                    "Berufshauptgruppe data available from SECO monthly reports. "
-                    "Use seco_search_datasets('Berufshauptgruppe') for CSV download links."
+                    "Keine maschinenlesbare Quelle für Arbeitslose nach "
+                    "Berufshauptgruppe (geprüft 2026-08-14). SECO weist die "
+                    "Gliederung im Monatsbericht aus und zeigt sie interaktiv auf "
+                    "amstat.ch; als Datei publiziert wird sie nicht."
                 ),
                 "stellenmeldepflicht_threshold": "≥5% Arbeitslosenquote",
                 "data_source": "SECO Arbeitsmarktstatistik, NOGA-Gliederung 2008",
@@ -1746,10 +1592,16 @@ async def seco_get_unemployment_by_occupation(params: OccupationInput) -> str:
         "- Aktuelle Liste jährlich publiziert von SECO",
         "- [Link zur aktuellen Liste](https://www.arbeit.swiss/secoalv/de/home/menue/arbeitgeber/stellenmeldepflicht.html)",
         "- In der Berufsberatung: Jugendliche auf diese Berufe sensibilisieren\n",
-        "### So erhältst du die Rohdaten\n",
-        "1. `seco_search_datasets('Berufshauptgruppe')` → Datensatz-IDs finden",
-        "2. `seco_get_dataset('<ID>')` → CSV-Download-Links abrufen",
-        "3. CSV direkt herunterladen und analysieren",
+        "### Woher die Zahlen kommen\n",
+        "**Nicht von hier.** Für Arbeitslose nach Berufshauptgruppe gibt es auf",
+        "opendata.swiss keine maschinenlesbare Quelle (geprüft 2026-08-14: die Suche",
+        "nach 'Berufshauptgruppe' liefert vier Datensätze, alle vom BFS und alle zu",
+        "anderen Fragen). SECO weist die Gliederung im Monatsbericht aus und zeigt",
+        "sie interaktiv auf amstat.ch:",
+        "",
+        "- [amstat.ch – Arbeitslose nach Beruf](https://www.amstat.ch/v2/amstat_de.html)",
+        "- [Monatsbericht «Die Lage auf dem Arbeitsmarkt»]"
+        "(https://www.arbeit.swiss/de/informationszentrum/arbeitsmarktstatistik-schweiz)",
     ]
 
     if datasets:

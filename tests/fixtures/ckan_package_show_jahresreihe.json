@@ -1,0 +1,455 @@
+{
+  "help": "https://ckan.opendata.swiss/api/3/action/help_show?name=package_show",
+  "success": true,
+  "result": {
+    "accrual_periodicity": "http://publications.europa.eu/resource/authority/frequency/ANNUAL",
+    "author": {
+      "fr": "Office fédéral de la statistique",
+      "it": "Ufficio federale di statistica",
+      "en": "Federal Statistical Office",
+      "de": "Bundesamt für Statistik"
+    },
+    "author_email": null,
+    "conforms_to": [],
+    "contact_points": [
+      {
+        "email": "auskunftsdienst@bfs.admin.ch",
+        "name": "info@bfs.admin.ch"
+      }
+    ],
+    "creator_user_id": "af084126-f711-4016-a585-70354e997796",
+    "description": {
+      "fr": "Ce dataset présente les chômeurs au sens du BIT ainsi que les chômeurs inscrits et les demandeurs d’emploi inscrits du SECO, depuis 2000.",
+      "de": "Dieses Dataset präsentiert die Erwerbslosen gemäss ILO sowie die registrierten Arbeitslosen und die registrierten Stellensuchenden des SECO, seit 2000.",
+      "en": "",
+      "it": ""
+    },
+    "documentation": [],
+    "id": "13f60916-3df1-495a-9b30-4e9b1daea562",
+    "identifier": "36346859@bundesamt-fur-statistik-bfs",
+    "isopen": false,
+    "issued": "2026-02-17T07:30:00+00:00",
+    "keywords": {
+      "en": [
+        "work-and-income"
+      ],
+      "de": [
+        "arbeit-und-erwerb"
+      ],
+      "fr": [
+        "travail-et-remuneration"
+      ],
+      "it": [
+        "lavoro-e-reddito"
+      ]
+    },
+    "language": [
+      "de",
+      "fr"
+    ],
+    "license_id": null,
+    "license_title": null,
+    "maintainer": "auskunftsdienst@bfs.admin.ch",
+    "maintainer_email": null,
+    "metadata_created": "2026-02-17T09:35:54.029521",
+    "metadata_modified": "2026-08-14T14:29:40.446588",
+    "name": "erwerbslose-gemass-ilo-registrierte-arbeitslose-und-registrierte-stellensuchende4",
+    "num_resources": 4,
+    "num_tags": 5,
+    "organization": {
+      "approval_status": "approved",
+      "created": "2015-11-30T11:50:01.742198",
+      "description": {
+        "fr": "L'OFS est le centre de compétence de la statistique publique suisse. Il produit des informations statistiques sur la population, l'économie, la société, la formation et la recherche, le territoire et l'environnement. Ces informations servent à la formation de l’opinion publique. Elles sont un outil de planification et de gouvernance dans tous les domaines de l’action politique et contribuent au bon fonctionnement de notre État moderne et démocratique.",
+        "de": "Das BFS ist das nationale Kompetenzzentrum der öffentlichen Statistik der Schweiz. Es produziert und publiziert statistische Informationen über den Stand und die Entwicklung von Bevölkerung, Wirtschaft, Gesellschaft, Bildung, Forschung, Raum und Umwelt. Diese Informationen dienen der Meinungsbildung in der Bevölkerung sowie der Planung und Steuerung von zentralen Politikbereichen. Sie leisten einen wichtigen Beitrag für einen modernen, demokratischen Staat.",
+        "en": "The FSO is Switzerland's national competence centre for official statistics. It produces and publishes statistical information on the status and development of the population, economy, society, education, research, territory and the environment. This information is used for opinion building among the population and for the planning and management of key policy areas. They make an important contribution to a modern, democratic state.",
+        "it": "L’UST è il centro di competenza nazionale per la statistica pubblica della Svizzera. Produce e pubblica informazioni statistiche sullo stato e sull'evoluzione della popolazione, dell'economia, della società, della formazione, della ricerca, del territorio e dell'ambiente. Queste informazioni servono alla formazione dell'opinione pubblica nonché alla pianificazione e alla gestione in ambiti politici di centrale importanza. Forniscono un importante contributo per uno Stato moderno e democratico."
+      },
+      "display_name": {
+        "de": "Bundesamt für Statistik BFS",
+        "en": "Federal Statistical Office FSO",
+        "fr": "Office fédéral de la statistique OFS",
+        "it": "Ufficio federale di statistica UST"
+      },
+      "id": "4309c328-c618-4077-bcdc-378a21ee1b46",
+      "image_display_url": "https://ckan.opendata.swiss/uploads/group/BFS_08_web.jpg",
+      "image_url": "https://ckan.opendata.swiss/uploads/group/BFS_08_web.jpg",
+      "is_organization": true,
+      "name": "bundesamt-fur-statistik-bfs",
+      "num_followers": 0,
+      "package_count": 3290,
+      "political_level": "confederation",
+      "state": "active",
+      "title": {
+        "de": "Bundesamt für Statistik BFS",
+        "en": "Federal Statistical Office FSO",
+        "fr": "Office fédéral de la statistique OFS",
+        "it": "Ufficio federale di statistica UST"
+      },
+      "type": "organization",
+      "url": "https://www.bfs.admin.ch",
+      "tags": [],
+      "groups": []
+    },
+    "owner_org": "4309c328-c618-4077-bcdc-378a21ee1b46",
+    "private": false,
+    "publisher": {
+      "url": "https://www.bfs.admin.ch/",
+      "name": {
+        "fr": "Office fédéral de la statistique",
+        "it": "Ufficio federale di statistica",
+        "en": "Federal Statistical Office",
+        "de": "Bundesamt für Statistik"
+      }
+    },
+    "qualified_relations": [],
+    "relations": [
+      {
+        "label": {
+          "de": "legal_basis",
+          "en": "legal_basis",
+          "fr": "legal_basis",
+          "it": "legal_basis"
+        },
+        "url": "https://www.admin.ch/opc/de/classified-compilation/19920252/index.html"
+      }
+    ],
+    "see_alsos": [],
+    "spatial": "Schweiz",
+    "state": "active",
+    "temporals": [
+      {
+        "end_date": "2025-12-31T23:59:59.999999",
+        "start_date": "2000-01-01T00:00:00"
+      }
+    ],
+    "title": {
+      "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+      "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+      "en": "",
+      "it": ""
+    },
+    "title_for_slug": "erwerbslose-gemass-ilo-registrierte-arbeitslose-und-registrierte-stellensuchende4",
+    "type": "dataset",
+    "url": "https://www.bfs.admin.ch/asset/de/je-d-03.03.00.01",
+    "version": null,
+    "extras": [
+      {
+        "key": "guid",
+        "value": "36346859@bundesamt-fur-statistik-bfs"
+      },
+      {
+        "key": "uri",
+        "value": "http://liip-prod-ckan-svc:80/perma/36346859@bundesamt-fur-statistik-bfs"
+      }
+    ],
+    "groups": [
+      {
+        "description": {
+          "fr": "",
+          "de": "",
+          "en": "",
+          "it": ""
+        },
+        "display_name": {
+          "de": "Wirtschaft und Finanzen",
+          "en": "Economy and finance",
+          "fr": "Économie et finances",
+          "it": "Economia e finanze"
+        },
+        "id": "34f50c10-ddd0-4e37-b5c0-49456b39e31a",
+        "image_display_url": "",
+        "name": "econ",
+        "title": {
+          "de": "Wirtschaft und Finanzen",
+          "en": "Economy and finance",
+          "fr": "Économie et finances",
+          "it": "Economia e finanze"
+        }
+      }
+    ],
+    "resources": [
+      {
+        "access_services": [],
+        "byte_size": 0,
+        "cache_last_updated": null,
+        "cache_url": null,
+        "created": "2026-02-17T09:35:54.034663",
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "description": {
+          "de": "Dieses Dataset präsentiert die Erwerbslosen gemäss ILO sowie die registrierten Arbeitslosen und die registrierten Stellensuchenden des SECO, seit 2000.",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "display_name": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "documentation": [],
+        "format": "HTML",
+        "hash": "",
+        "id": "66cf37fe-1732-46db-82da-644ca93c94fc",
+        "identifier": "36346864-de@bundesamt-fur-statistik-bfs",
+        "issued": "2026-02-17T07:30:00+00:00",
+        "language": [
+          "de"
+        ],
+        "last_modified": null,
+        "license": "https://opendata.swiss/terms-of-use#terms_by",
+        "media_type": "text/html",
+        "metadata_modified": "2026-07-28T12:50:45.948776",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "package_id": "13f60916-3df1-495a-9b30-4e9b1daea562",
+        "position": 0,
+        "resource_type": null,
+        "rights": "https://opendata.swiss/terms-of-use#terms_by",
+        "size": null,
+        "state": "active",
+        "temporal_resolution": "",
+        "title": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "uri": "",
+        "url": "https://www.bfs.admin.ch/asset/de/je-d-03.03.00.01",
+        "url_type": null
+      },
+      {
+        "access_services": [],
+        "byte_size": 0,
+        "cache_last_updated": null,
+        "cache_url": null,
+        "created": "2026-02-17T09:35:54.034670",
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "description": {
+          "de": "Dieses Dataset präsentiert die Erwerbslosen gemäss ILO sowie die registrierten Arbeitslosen und die registrierten Stellensuchenden des SECO, seit 2000.",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "display_name": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "documentation": [],
+        "download_url": "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346864/master",
+        "format": "XLS",
+        "hash": "",
+        "id": "cc586287-7373-4581-bb2a-eb0961e65577",
+        "identifier": "36346864-master@bundesamt-fur-statistik-bfs",
+        "issued": "2026-02-17T07:30:00+00:00",
+        "language": [
+          "de"
+        ],
+        "last_modified": null,
+        "license": "https://opendata.swiss/terms-of-use#terms_by",
+        "media_type": "application/vnd.ms-excel",
+        "metadata_modified": "2026-07-28T12:50:45.948698",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "modified": "2026-02-05T09:33:18.448000+00:00",
+        "name": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "package_id": "13f60916-3df1-495a-9b30-4e9b1daea562",
+        "position": 1,
+        "resource_type": null,
+        "rights": "https://opendata.swiss/terms-of-use#terms_by",
+        "size": null,
+        "state": "active",
+        "temporal_resolution": "",
+        "title": {
+          "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+          "en": "",
+          "fr": "",
+          "it": ""
+        },
+        "uri": "",
+        "url": "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346864/master",
+        "url_type": null
+      },
+      {
+        "access_services": [],
+        "byte_size": 0,
+        "cache_last_updated": null,
+        "cache_url": null,
+        "created": "2026-02-17T09:35:54.034667",
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "description": {
+          "fr": "Ce dataset présente les chômeurs au sens du BIT ainsi que les chômeurs inscrits et les demandeurs d’emploi inscrits du SECO, depuis 2000.",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "display_name": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "documentation": [],
+        "format": "HTML",
+        "hash": "",
+        "id": "5fa081b6-9532-402c-840f-b2b288faedce",
+        "identifier": "36346867-fr@bundesamt-fur-statistik-bfs",
+        "issued": "2026-02-17T07:30:00+00:00",
+        "language": [
+          "fr"
+        ],
+        "last_modified": null,
+        "license": "https://opendata.swiss/terms-of-use#terms_by",
+        "media_type": "text/html",
+        "metadata_modified": "2026-07-28T12:50:45.948871",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "name": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "package_id": "13f60916-3df1-495a-9b30-4e9b1daea562",
+        "position": 2,
+        "resource_type": null,
+        "rights": "https://opendata.swiss/terms-of-use#terms_by",
+        "size": null,
+        "state": "active",
+        "temporal_resolution": "",
+        "title": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "uri": "",
+        "url": "https://www.bfs.admin.ch/asset/fr/je-f-03.03.00.01",
+        "url_type": null
+      },
+      {
+        "access_services": [],
+        "byte_size": 0,
+        "cache_last_updated": null,
+        "cache_url": null,
+        "created": "2026-02-17T09:35:54.034669",
+        "datastore_active": false,
+        "datastore_contains_all_records_of_source_file": false,
+        "description": {
+          "fr": "Ce dataset présente les chômeurs au sens du BIT ainsi que les chômeurs inscrits et les demandeurs d’emploi inscrits du SECO, depuis 2000.",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "display_name": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "documentation": [],
+        "download_url": "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346867/master",
+        "format": "XLS",
+        "hash": "",
+        "id": "dfab9270-1370-49ca-bfe9-846e38bd96ad",
+        "identifier": "36346867-master@bundesamt-fur-statistik-bfs",
+        "issued": "2026-02-17T07:30:00+00:00",
+        "language": [
+          "fr"
+        ],
+        "last_modified": null,
+        "license": "https://opendata.swiss/terms-of-use#terms_by",
+        "media_type": "application/vnd.ms-excel",
+        "metadata_modified": "2026-07-28T12:50:45.948530",
+        "mimetype": null,
+        "mimetype_inner": null,
+        "modified": "2026-02-05T09:33:26.157000+00:00",
+        "name": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "package_id": "13f60916-3df1-495a-9b30-4e9b1daea562",
+        "position": 3,
+        "resource_type": null,
+        "rights": "https://opendata.swiss/terms-of-use#terms_by",
+        "size": null,
+        "state": "active",
+        "temporal_resolution": "",
+        "title": {
+          "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+          "en": "",
+          "de": "",
+          "it": ""
+        },
+        "uri": "",
+        "url": "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346867/master",
+        "url_type": null
+      }
+    ],
+    "tags": [
+      {
+        "display_name": "arbeit-und-erwerb",
+        "id": "52a446bd-841f-46e0-ac35-b85430074f82",
+        "name": "arbeit-und-erwerb",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "lavoro-e-reddito",
+        "id": "62953071-2d93-4922-a8e1-30bc49172f22",
+        "name": "lavoro-e-reddito",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "lavur-e-gudogn",
+        "id": "9ac11532-44ca-4c70-bb20-a25fd7f25f72",
+        "name": "lavur-e-gudogn",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "travail-et-remuneration",
+        "id": "c5152a40-b6d0-458f-8889-47cfe1351ee2",
+        "name": "travail-et-remuneration",
+        "state": "active",
+        "vocabulary_id": null
+      },
+      {
+        "display_name": "work-and-income",
+        "id": "0e323739-064a-43ce-b18c-0a36117e310c",
+        "name": "work-and-income",
+        "state": "active",
+        "vocabulary_id": null
+      }
+    ],
+    "relationships_as_subject": [],
+    "relationships_as_object": [],
+    "display_name": {
+      "de": "Erwerbslose gemäss ILO, registrierte Arbeitslose und registrierte Stellensuchende",
+      "fr": "Chômeurs au sens du BIT, chômeurs inscrits et demandeurs d'emploi inscrits",
+      "en": "",
+      "it": ""
+    }
+  }
+}

@@ -39,7 +39,7 @@ This server connects AI models to Swiss labor market statistics — unemployment
 
 | Source | Description | Status |
 |--------|-------------|--------|
-| [opendata.swiss](https://opendata.swiss/de/dataset?q=seco) | CKAN metadata catalog with SECO dataset CSVs | ✅ Live |
+| [opendata.swiss](https://opendata.swiss/de/dataset) | CKAN catalogue; the pinned BFS table `T3.3.0.1` carries the SECO annual series | ✅ Live |
 | [arbeit.swiss](https://www.arbeit.swiss) | Monthly press reports (PDF, structured URL pattern) | ✅ Live |
 | [amstat.ch](https://www.amstat.ch) | AMSTAT reference portal | ⚠️ JavaScript SPA, no public REST API |
 | [unfallstatistik.ch](https://www.unfallstatistik.ch) | Unfallstatistik UVG (SSUV/KSUV c/o Suva) — occupational accidents and diseases | ⚠️ PDF only, no API (see below) |
@@ -84,17 +84,50 @@ This server connects AI models to Swiss labor market statistics — unemployment
 
 ---
 
+## Where the figures come from — and what is missing
+
+**SECO is no longer a publisher on opendata.swiss.** Verified 2026-08-14:
+`organization_show` returns 404, and none of the 176 entries in
+`organization_list` is SECO. Until then the server filtered every search on
+that organisation and therefore returned **nothing** — a name lookup that
+misses looks exactly like an empty search.
+
+The registered unemployed and job seekers are still SECO's figures: the **BFS
+publishes them** in table `T3.3.0.1` and names SECO in the footer. The server
+reads that table through a **pinned dataset id** (`sources.py`), checked
+against the live source by a live test.
+
+| Series | 2000 | 2025 |
+|---|---|---|
+| Registered job seekers (SECO) | 124.6 | 214.1 |
+| Registered unemployed (SECO) | 72.0 | 133.7 |
+| ILO unemployed (BFS) | 126.5 | 248.5 |
+
+*thousands, annual average*
+
+The three series do **not** measure the same thing: in 2000 the ILO figure is
+1.76× the registered one. The server reports them separately and labelled, and
+never converts one into the other.
+
+**Not available at present:** monthly values, cantonal breakdowns, youth
+unemployment (zero datasets portal-wide) and unemployment by occupational
+group. The affected tools say so and return **no** substitute figure. These
+values exist interactively on [amstat.ch](https://www.amstat.ch/v2/amstat_de.html),
+which offers no interface a server could call.
+
+---
+
 ## Tools
 
 | Tool | Description | Key Use Case |
 |------|-------------|--------------|
-| `seco_search_datasets` | Search SECO datasets on opendata.swiss | Discovery |
+| `seco_search_datasets` | Search labour-market datasets on opendata.swiss (publisher shown per hit) | Discovery |
 | `seco_get_dataset` | Full metadata + download links for a dataset | Data access |
-| `seco_get_unemployment_overview` | National/cantonal unemployment figures | Labor market overview |
-| `seco_get_youth_unemployment` | Youth unemployment (15–24 year olds) | 🎓 Berufswahlberatung |
-| `seco_get_job_seekers` | Stellensuchende (broader than unemployed) | Training demand |
-| `seco_get_open_positions` | Open positions — leading indicator | Sector analysis |
-| `seco_get_unemployment_by_occupation` | Breakdown by Berufshauptgruppe | 🎓 Vocational guidance |
+| `seco_get_unemployment_overview` | Registered unemployed, national, annual series from 2000 | Labor market overview |
+| `seco_get_youth_unemployment` | Youth unemployment (15–24) — **no data source at present**, see below | 🎓 Berufswahlberatung |
+| `seco_get_job_seekers` | Registered job seekers, national, annual series from 2000 | Training demand |
+| `seco_get_open_positions` | Open positions — **no national series available** | Sector analysis |
+| `seco_get_unemployment_by_occupation` | Breakdown by Berufshauptgruppe — **no machine-readable source** | 🎓 Vocational guidance |
 | `seco_get_monthly_report_url` | Generate/verify PDF report URL | Source access |
 | `seco_list_cantons` | All 26 canton codes and names | Utility |
 | `seco_get_uvg_overview` | UVG key figures on occupational accidents and diseases | Risk overview |
