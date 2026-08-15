@@ -29,6 +29,7 @@ Testsuite importieren es.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
@@ -41,7 +42,7 @@ from typing import Any
 
 import httpx
 
-from seco_labor_mcp import sources
+from seco_labor_mcp import kantone, sources
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
@@ -62,6 +63,10 @@ FRUEHERER_ORG_FILTER = "staatssekretariat-fur-wirtschaft-seco"
 DATENSATZ = "arbeitslose-anz"  # traegt eine CSV-Ressource, die der Server liest
 UVG_JAHRGANG = 26  # Ts26.pdf
 UVG_BRANCHE = ("BUV", "41")  # NOGA 41 Hochbau
+
+# Wie viele der juengsten Perioden je kantonaler Reihe aufgezeichnet werden.
+# Drei: genug fuer eine Zeitachse, wenig genug fuer einen lesbaren Diff.
+PERIODEN_JE_KANTON = 3
 
 # Die Seiten des Jahresberichts, aus denen `TABLE_SPECS` seine Tabellen liest.
 # Nicht geraten: der Recorder sucht die Beschriftungen und meldet, was er fand.
@@ -98,6 +103,37 @@ def holen(url: str, **params: Any) -> httpx.Response:
             print(f"      Verbindungsfehler ({exc!r}), Versuch {versuch + 2}/3 ...")
             time.sleep(2.0 * (versuch + 1))
     raise RuntimeError(f"{url} nach drei Versuchen nicht erreichbar") from letzter
+
+
+def _kuerze_kantonscsv(roh: bytes, reihe: kantone.KantonsReihe) -> tuple[str, int, int]:
+    """Kuerzt eine kantonale CSV auf die juengsten Perioden, Spalten unveraendert.
+
+    Vollstaendige Perioden statt einer Kopf- oder Zufallsauswahl: die Adapter
+    summieren ueber Geschlecht, Nationalitaet und Branche: eine halbe Periode
+    ergaebe eine halbe Summe, die wie eine ganze aussieht.
+    """
+    text = roh.decode("utf-8-sig", errors="replace")
+    zeilen = list(csv.reader(io.StringIO(text), delimiter=reihe.trennzeichen))
+    kopf, daten = zeilen[0], [z for z in zeilen[1:] if z]
+
+    def periode(z: list[str]) -> str:
+        eintrag = dict(zip(kopf, z, strict=False))
+        if "Date" in eintrag:
+            return eintrag["Date"]
+        if "INDIKATOR_JAHR" in eintrag:
+            return eintrag["INDIKATOR_JAHR"]
+        monat = eintrag.get("monat", "")
+        nummer = kantone.MONATSNAMEN.get(monat.strip().lower())
+        monat_teil = f"{nummer:02d}" if nummer else str(monat).zfill(2)
+        return f"{eintrag.get('jahr', '')}-{monat_teil}"
+
+    jung = sorted({periode(z) for z in daten})[-PERIODEN_JE_KANTON:]
+    gewaehlt = [z for z in daten if periode(z) in jung]
+    puffer = io.StringIO()
+    schreiber = csv.writer(puffer, delimiter=reihe.trennzeichen, lineterminator="\n")
+    schreiber.writerow(kopf)
+    schreiber.writerows(gewaehlt)
+    return puffer.getvalue(), len(daten), len(gewaehlt)
 
 
 def main() -> int:
@@ -196,6 +232,46 @@ def main() -> int:
         f"{sorted(gelesen['series'])}, Jahre {gelesen['years'][0]}-"
         f"{gelesen['years'][-1]}. Ungekuerzt, weil die ganze Mappe 17 kB misst",
     )
+
+    # --- Die vier kantonalen Reihen --------------------------------------
+    # Je Kanton ein eigenes Schema, also je Kanton eine eigene Aufzeichnung.
+    # Gekuerzt wird die Zahl der Zeilen, nie die der Spalten -- und die Zeilen
+    # sind gewaehlt: die juengsten Monate vollstaendig, damit jede
+    # Merkmalskombination erhalten bleibt. Die ersten Zeilen der TG-Datei
+    # zeigen ausschliesslich Januar 2016 und belegten weder die Zeitachse noch
+    # den aktuellen Rand.
+    for kuerzel in sorted(kantone.KANTONE):
+        reihe = kantone.KANTONE[kuerzel]
+        paket = holen(f"{CKAN_BASE}/package_show", id=reihe.ckan_id).json()
+        ressource = next(
+            r for r in paket["result"]["resources"] if (r.get("format") or "").upper() == "CSV"
+        )
+        roh = holen(ressource["url"]).content
+        text, zeilen_gesamt, gewaehlt = _kuerze_kantonscsv(roh, reihe)
+        write(
+            f"kanton_{kuerzel.lower()}.csv",
+            text.encode("utf-8"),
+            ressource["url"],
+            f"Kopfzeile unveraendert, keine Spalte entfernt; {gewaehlt} von "
+            f"{zeilen_gesamt} Datenzeilen: die juengsten Perioden vollstaendig. "
+            f"{reihe.herausgeber}, {reihe.granularitaet} ab {reihe.ab}",
+            f"{zeilen_gesamt} Datenzeilen",
+        )
+        if reihe.zweite_ckan_id:
+            paket2 = holen(f"{CKAN_BASE}/package_show", id=reihe.zweite_ckan_id).json()
+            res2 = next(
+                r for r in paket2["result"]["resources"] if (r.get("format") or "").upper() == "CSV"
+            )
+            roh2 = holen(res2["url"]).content
+            text2, gesamt2, gewaehlt2 = _kuerze_kantonscsv(roh2, reihe)
+            write(
+                f"kanton_{kuerzel.lower()}_quoten.csv",
+                text2.encode("utf-8"),
+                res2["url"],
+                f"Kopfzeile unveraendert; {gewaehlt2} von {gesamt2} Datenzeilen. "
+                f"Zweiter Datensatz desselben Kantons: {reihe.zweiter_slug}",
+                f"{gesamt2} Datenzeilen",
+            )
 
     # --- unfallstatistik.ch: die beiden HTML-Seiten ----------------------
     for name, pfad, wozu in (

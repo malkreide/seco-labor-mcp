@@ -71,9 +71,31 @@ Die drei Reihen messen **nicht dasselbe**: im Jahr 2000 ist die ILO-Zahl das
 1.76-fache der registrierten. Der Server gibt sie getrennt und beschriftet aus
 und rechnet sie nie ineinander um.
 
-**Was es zurzeit nicht gibt:** Monatswerte, kantonale Aufschlüsselungen,
-Jugendarbeitslosigkeit (portalweit null Datensätze) und Arbeitslose nach
-Berufshauptgruppe. Die betroffenen Werkzeuge sagen das und geben **keine**
+### Die kantonale Schicht: vier Kantone, vier Schemata
+
+National gibt es keine Monatswerte — **vier Kantone publizieren ihre
+RAV-Zahlen aber selbst**, jeder in seinem eigenen Portal mit eigenen
+Spaltennamen. Für sie liefert `seco_get_unemployment_overview(canton=…)`
+echte Werte:
+
+| Kanton | Granularität | ab | Ebene | Besonderheit |
+|---|---|---|---|---|
+| **TG** | monatlich | 2016-01 | Kanton | einzige Reihe **nach Altersklasse** → Jugendarbeitslosigkeit als Anzahl |
+| **FR** | monatlich | 2004-01 | Kanton **und Schweiz** | führt die Schweizer Monatszahl als Vergleichszeile mit |
+| **ZG** | monatlich | 1993-01 | Kanton | Jugendarbeitslosigkeit nur als **Quote**, nicht als Anzahl |
+| **ZH** | **jährlich** | 1991 | **Gemeinde** | keine Monatswerte; Bezirke und Regionen stehen in derselben Spalte wie die Gemeinden und werden getrennt |
+
+**Die übrigen 22 Kantone bekommen eine benannte Absage**, keine Zahl aus
+einem anderen Kanton und keine national aggregierte. Eine Teilabdeckung, die
+sich wie eine vollständige anfühlt, ist schlimmer als gar keine.
+
+Die vier Reihen sind **untereinander nicht vergleichbar** und ergeben addiert
+keine Schweizer Zahl: verschiedene Zeitachsen, verschiedene Gebietsebenen,
+und im Fall von ZG eine Quote statt einer Anzahl.
+
+**Was es weiterhin nicht gibt:** Arbeitslose nach Berufshauptgruppe, offene
+Stellen als nationale Reihe, und Jugendarbeitslosigkeit für die Schweiz oder
+für 24 der 26 Kantone. Die betroffenen Werkzeuge sagen das und geben **keine**
 Ersatzzahl aus. Interaktiv stehen diese Werte auf
 [amstat.ch](https://www.amstat.ch/v2/amstat_de.html); dort gibt es keine
 Schnittstelle, die ein Server ansprechen könnte.
@@ -86,8 +108,8 @@ Schnittstelle, die ein Server ansprechen könnte.
 |------|-------------|----------------|
 | `seco_search_datasets` | Arbeitsmarkt-Datensätze auf opendata.swiss suchen (mit Herausgeber je Treffer) | Datensatz-Discovery |
 | `seco_get_dataset` | Vollständige Metadaten und Download-Links | Datenzugang |
-| `seco_get_unemployment_overview` | Registrierte Arbeitslose, national, Jahresreihe ab 2000 | Überblick |
-| `seco_get_youth_unemployment` | Jugendarbeitslosigkeit (15–24 J.) — **zurzeit ohne Datenquelle**, siehe unten | 🎓 Berufswahlberatung |
+| `seco_get_unemployment_overview` | Registrierte Arbeitslose: national jährlich, für TG/FR/ZG/ZH kantonal | Überblick |
+| `seco_get_youth_unemployment` | Jugendarbeitslosigkeit (15–24 J.) — nur **TG** (Anzahl) und **ZG** (Quote) | 🎓 Berufswahlberatung |
 | `seco_get_job_seekers` | Registrierte Stellensuchende, national, Jahresreihe ab 2000 | Weiterbildungsbedarf |
 | `seco_get_open_positions` | Offene Stellen als Frühindikator — **keine nationale Reihe verfügbar** | Branchenanalyse |
 | `seco_get_unemployment_by_occupation` | Aufschlüsselung nach Berufshauptgruppe — **keine maschinenlesbare Quelle** | 🎓 Berufswahl |
