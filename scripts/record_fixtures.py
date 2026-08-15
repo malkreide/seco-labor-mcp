@@ -29,9 +29,9 @@ Testsuite importieren es.
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import io
+import json
 import subprocess
 import sys
 import time
@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from seco_labor_mcp import sources
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
@@ -51,6 +53,12 @@ USER_AGENT = "seco-labor-mcp-recorder (Swiss Public Data MCP Portfolio)"
 # Fest gewaehlt, nicht «irgendeiner»: eine vom Lauf abhaengige Auswahl erzeugt
 # bei jedem Aufzeichnen einen anderen Diff.
 SUCHBEGRIFF = "arbeitslose kantone"
+
+# Der Organisationsfilter, den der Client bis zum 2026-08-14 mitschickte. Aus
+# `server.py` ist er entfernt; hier bleibt er stehen, weil die Aufzeichnung
+# seiner Wirkung der Beleg fuer den Befund ist. Faellt sie eines Tages mit
+# Treffern zurueck, ist die Organisation wieder da und der Befund erledigt.
+FRUEHERER_ORG_FILTER = "staatssekretariat-fur-wirtschaft-seco"
 DATENSATZ = "arbeitslose-anz"  # traegt eine CSV-Ressource, die der Server liest
 UVG_JAHRGANG = 26  # Ts26.pdf
 UVG_BRANCHE = ("BUV", "41")  # NOGA 41 Hochbau
@@ -98,7 +106,9 @@ def main() -> int:
     entries: list[dict[str, Any]] = []
     print(f"Zeichne auf von {CKAN_BASE} und {UVG_BASE}")
 
-    def write(name: str, blob: bytes, url: str, rule: str, total: str | None = None) -> None:
+    def write(name: str, blob: Any, url: str, rule: str, total: str | None = None) -> None:
+        if not isinstance(blob, bytes):
+            blob = (json.dumps(blob, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         (FIXTURES / name).write_bytes(blob)
         entries.append(
             {
@@ -112,12 +122,10 @@ def main() -> int:
         )
         print(f"  ok  {name:<34} {len(blob):>8} B")
 
-    # --- CKAN: die Suche, wie der Client sie stellt ----------------------
-    from seco_labor_mcp.server import SECO_ORG  # die gepinnte Organisation
-
+    # --- CKAN: die Suche, wie der Client sie bis 2026-08-14 stellte -----
     params = {
         "q": SUCHBEGRIFF,
-        "fq": f"organization:{SECO_ORG}",
+        "fq": f"organization:{FRUEHERER_ORG_FILTER}",
         "rows": 10,
         "sort": "score desc, metadata_modified desc",
     }
@@ -129,7 +137,7 @@ def main() -> int:
         resp.content,
         str(resp.url),
         f"vollstaendig; der Aufruf des Clients Wort fuer Wort — Suche nach "
-        f"{SUCHBEGRIFF!r}, gefiltert auf `organization:{SECO_ORG}`. "
+        f"{SUCHBEGRIFF!r}, gefiltert auf `organization:{FRUEHERER_ORG_FILTER}`. "
         f"Ergebnis: **{treffer_mit} Treffer** (siehe Befund oben)",
     )
 
@@ -151,44 +159,42 @@ def main() -> int:
     # --- CKAN: ein Datensatz mit CSV-Ressource ---------------------------
     resp = holen(f"{CKAN_BASE}/package_show", id=DATENSATZ)
     paket = resp.json()
-    ressourcen = paket["result"].get("resources", [])
-    csv_res = next(r for r in ressourcen if (r.get("format") or "").upper() == "CSV")
     write(
         "ckan_package_show.json",
         resp.content,
         str(resp.url),
-        f"vollstaendig; Datensatz {DATENSATZ!r} — gewaehlt, weil er eine "
-        "CSV-Ressource fuehrt und damit den zweiten Weg des Servers belegt: "
-        "von der Ressourcenliste in die Datei",
+        f"vollstaendig; Datensatz {DATENSATZ!r} — ein beliebiger Datensatz, an "
+        "dem die Form einer `package_show`-Antwort belegt ist. Die gepinnte "
+        "Jahresreihe steht eigens weiter unten",
     )
 
-    # --- Die CSV-Ressource selbst ---------------------------------------
-    resp = holen(csv_res["url"])
-    text = resp.content.decode("utf-8-sig")
-    zeilen = text.splitlines()
-    reader = csv.reader(io.StringIO(text))
-    kopf = next(reader)
-    alle = [z for z in reader if z]
-    gebiet_spalte = kopf.index("GEBIET_NAME") if "GEBIET_NAME" in kopf else 1
-    # Zwei vollstaendige Zeitreihen statt eines Kopfausschnitts: die ersten
-    # Zeilen der Datei sind alle dieselbe Gemeinde im aeltesten Jahr, und eine
-    # abgeschnittene Reihe belegt weder die Spanne noch das juengste Jahr.
-    gebiete = [alle[0][gebiet_spalte], alle[-1][gebiet_spalte]]
-    gewaehlt = [z for z in alle if z[gebiet_spalte] in gebiete]
-    puffer = io.StringIO()
-    schreiber = csv.writer(puffer, lineterminator="\n")
-    schreiber.writerow(kopf)
-    schreiber.writerows(gewaehlt)
+    # --- Die gepinnte BFS-Tabelle mit den SECO-Reihen --------------------
+    # Zwei Aufzeichnungen, weil der Server zwei Schritte geht: erst
+    # `package_show` auf die gepinnte UUID, dann die XLS-Ressource, die dort
+    # steht. Die Asset-URL wird bewusst nicht gepinnt -- sie aendert sich bei
+    # jeder Neupublikation. Genau diese Kette soll die Fixture belegen.
+    antwort = holen(f"{CKAN_BASE}/package_show", id=sources.JAHRESREIHE.ckan_id)
+    paket = antwort.json()
     write(
-        "ckan_ressource.csv",
-        puffer.getvalue().encode("utf-8"),
-        csv_res["url"],
-        f"Kopfzeile unveraendert, keine Spalte entfernt; {len(gewaehlt)} von "
-        f"{len(alle)} Datenzeilen: die **vollstaendigen** Zeitreihen von "
-        f"{gebiete[0]!r} und {gebiete[1]!r}. Die Datei beginnt mit einer "
-        "einzigen Gemeinde im aeltesten Jahr — eine Kopfauswahl belegte weder "
-        "die Spanne noch das juengste Jahr",
-        f"{len(zeilen)} Zeilen",
+        "ckan_package_show_jahresreihe.json",
+        paket,
+        str(antwort.url),
+        f"vollstaendig; die gepinnte Kennung aus `sources.py` ({sources.JAHRESREIHE.slug})",
+    )
+    xls = next(
+        r
+        for r in paket["result"]["resources"]
+        if (r.get("format") or "").upper() in {"XLS", "XLSX"}
+    )
+    roh = holen(xls["url"]).content
+    gelesen = sources.parse_jahresreihe(roh)
+    write(
+        "bfs_jahresreihe.xlsx",
+        roh,
+        xls["url"],
+        f"vollstaendig; Blatt {sources.JAHRESREIHE.blatt} mit den drei Reihen "
+        f"{sorted(gelesen['series'])}, Jahre {gelesen['years'][0]}-"
+        f"{gelesen['years'][-1]}. Ungekuerzt, weil die ganze Mappe 17 kB misst",
     )
 
     # --- unfallstatistik.ch: die beiden HTML-Seiten ----------------------
@@ -240,7 +246,9 @@ def main() -> int:
         f"vollstaendig; NOGA {noga}, {scheme} — klein genug, um ungekuerzt zu bleiben",
     )
 
-    _write_provenance(recorded_at, entries, _befund(SECO_ORG, treffer_mit, treffer_ohne))
+    _write_provenance(
+        recorded_at, entries, _befund(FRUEHERER_ORG_FILTER, treffer_mit, treffer_ohne)
+    )
     print(f"\nPROVENANCE.md geschrieben, Aufzeichnungsdatum {recorded_at}")
     return _warne_bei_ignorierten(entries)
 

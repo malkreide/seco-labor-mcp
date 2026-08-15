@@ -2,21 +2,16 @@
 
 import pytest
 
-from seco_labor_mcp import server as _server_mod
-
 
 def pytest_configure(config):
     """Register custom markers."""
     config.addinivalue_line("markers", "live: mark test as requiring live API access")
 
 
-@pytest.fixture(autouse=True)
-def _clear_csv_cache():
-    """Reset the module-level CSV cache between tests so mocked responses
-    from one test don't leak into another."""
-    _server_mod._CSV_CACHE.clear()
-    yield
-    _server_mod._CSV_CACHE.clear()
+# Der modulweite CSV-Cache ist mit dem CSV-Zweig entfallen; die Fixture, die
+# ihn zwischen den Tests leerte, deshalb ebenfalls. Der neue Abrufweg
+# (`_fetch_bytes_with_retry`) haelt keinen Zustand ueber einen Aufruf hinaus —
+# es gibt nichts mehr, was von einem Test in den naechsten lecken koennte.
 
 
 def pytest_collection_modifyitems(config, items):

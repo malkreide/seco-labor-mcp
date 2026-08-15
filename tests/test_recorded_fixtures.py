@@ -17,22 +17,28 @@ Herkunft, Datum, Auswahlregel und SHA-256 je Datei stehen in
 from __future__ import annotations
 
 import datetime as dt
+import io
+import json
 import re
 
 import httpx
 import pytest
 import respx
-from fixture_data import fixture_bytes, fixture_json, fixture_text, provenance, recorded_names
+from fixture_data import fixture_bytes, fixture_json, provenance, recorded_names
 
-from seco_labor_mcp import server as _server_mod
-from seco_labor_mcp import uvg
+from seco_labor_mcp import sources, uvg
 from seco_labor_mcp.server import (
     CKAN_BASE,
-    SECO_ORG,
     DatasetDetailsInput,
     DatasetSearchInput,
-    _try_live_csv,
+    JobSeekersInput,
+    ResponseFormat,
+    UnemploymentInput,
+    YouthUnemploymentInput,
     seco_get_dataset,
+    seco_get_job_seekers,
+    seco_get_unemployment_overview,
+    seco_get_youth_unemployment,
     seco_search_datasets,
 )
 
@@ -41,7 +47,8 @@ from seco_labor_mcp.server import (
 ENDPUNKTE = {
     "ckan/package_search": "ckan_package_search.json",
     "ckan/package_show": "ckan_package_show.json",
-    "die CSV-Ressource eines Datensatzes": "ckan_ressource.csv",
+    "ckan/package_show (gepinnte Jahresreihe)": "ckan_package_show_jahresreihe.json",
+    "die XLS-Ressource der gepinnten Jahresreihe": "bfs_jahresreihe.xlsx",
     "unfallstatistik/schluesselzahlen_d.htm": "uvg_schluesselzahlen.html",
     "unfallstatistik/publikationen_d.htm": "uvg_publikationen.html",
     "unfallstatistik/Ts{yy}.pdf": "uvg_jahresbericht_ts26.pdf",
@@ -75,6 +82,85 @@ def test_jeder_endpunkt_hat_eine_aufzeichnung():
     assert not fehlend, f"Endpunkte ohne Aufzeichnung: {fehlend}"
 
 
+# --------------------------------------------------------------------------
+# Die gepinnte BFS-Tabelle mit den SECO-Reihen
+# --------------------------------------------------------------------------
+
+
+def test_die_gepinnte_kennung_zeigt_auf_den_aufgezeichneten_datensatz():
+    """Ein Literal-Register statt eines Namensabgleichs — und der Beleg dazu.
+
+    Der Organisationsfilter war ein Namensabgleich und lief still ins Leere, als
+    die Organisation verschwand. Die Kennung in `sources.py` ist dagegen eine
+    UUID, und diese Zusicherung haelt sie gegen eine datierte Antwort der
+    Quelle. Der Live-Test in `test_live.py` prueft dieselbe Kennung gegen die
+    echte Quelle — zusammen ergibt das: verschwindet der Datensatz, wird ein
+    Test rot statt eine Antwort leer.
+    """
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    assert ds["id"] == sources.JAHRESREIHE.ckan_id
+    assert ds["name"] == sources.JAHRESREIHE.slug
+    formate = {(r.get("format") or "").upper() for r in ds["resources"]}
+    assert "XLS" in formate or "XLSX" in formate, (
+        f"der Datensatz fuehrt keine Tabellenressource mehr: {sorted(formate)}"
+    )
+
+
+def test_die_drei_reihen_stehen_in_der_aufgezeichneten_tabelle():
+    """Beschriftungen wörtlich, nicht über die Zeilenposition geraten."""
+    daten = sources.parse_jahresreihe(fixture_bytes("bfs_jahresreihe.xlsx"))
+    assert set(daten["series"]) == set(sources.REIHEN)
+    for schluessel, praefix in sources.REIHEN.items():
+        assert daten["labels"][schluessel].startswith(praefix)
+    jahre = daten["years"]
+    assert jahre == sorted(jahre) and len(jahre) > 20
+    for schluessel, werte in daten["series"].items():
+        assert werte, f"Reihe {schluessel} ist leer"
+        assert set(werte) <= set(jahre)
+
+
+def test_die_ilo_reihe_ist_nicht_die_registrierte():
+    """Die Verwechslung, die dieser Umbau verhindern soll — an Zahlen.
+
+    Beide Reihen stehen im selben Blatt untereinander und sehen dadurch
+    vergleichbar aus. Wer die eine fuer die andere einsetzt, weil gerade nur
+    die eine erreichbar ist, produziert eine Zahl, die plausibel aussieht und
+    im Jahr 2000 um drei Viertel danebenliegt.
+    """
+    daten = sources.parse_jahresreihe(fixture_bytes("bfs_jahresreihe.xlsx"))
+    registriert = daten["series"]["registrierte_arbeitslose"]
+    ilo = daten["series"]["erwerbslose_ilo"]
+    gemeinsam = sorted(set(registriert) & set(ilo))
+    assert gemeinsam, "die beiden Reihen teilen keine Jahre"
+    abstaende = [ilo[j] / registriert[j] for j in gemeinsam if registriert[j]]
+    assert max(abstaende) > 1.3, (
+        "die ILO-Reihe liegt nirgends deutlich ueber der registrierten — dann "
+        "misst die Aufzeichnung nicht mehr, was dieser Test meint"
+    )
+    # Und die Stellensuchenden liegen ihrerseits ueber den Arbeitslosen: sie
+    # schliessen Massnahmen und Zwischenverdienst ein.
+    suchende = daten["series"]["registrierte_stellensuchende"]
+    assert all(suchende[j] > registriert[j] for j in gemeinsam if j in suchende)
+
+
+def test_die_tabelle_meldet_eine_formaenderung_statt_sie_zu_verschlucken():
+    """Fehlt eine Reihe, ist eine benannte Ausnahme das Ergebnis, keine leere Reihe."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(fixture_bytes("bfs_jahresreihe.xlsx")))
+    ws = wb[sources.JAHRESREIHE.blatt]
+    for zeile in ws.iter_rows(max_row=12):
+        if isinstance(zeile[0].value, str) and zeile[0].value.startswith(
+            sources.REIHEN["registrierte_arbeitslose"]
+        ):
+            zeile[0].value = "Irgendetwas anderes"
+            break
+    puffer = io.BytesIO()
+    wb.save(puffer)
+    with pytest.raises(sources.TabelleNichtLesbarError, match="Registrierte Arbeitslose"):
+        sources.parse_jahresreihe(puffer.getvalue())
+
+
 @pytest.mark.parametrize("name", sorted(ENDPUNKTE.values()))
 def test_jede_aufzeichnung_ist_nicht_leer(name):
     """Eine leere Aufzeichnung sieht aus wie eine gueltige und prueft nichts."""
@@ -106,19 +192,52 @@ def test_der_filter_trifft_niemanden():
         "und den Befund in PROVENANCE.md streichen"
     )
     assert ohne["result"]["count"] > 0, "ohne Filter antwortet derselbe Endpunkt normal"
-    assert SECO_ORG in provenance(), "der Befund nennt die gepinnte Organisation"
+    assert "staatssekretariat-fur-wirtschaft-seco" in provenance(), (
+        "der Befund nennt die Organisation, auf die frueher gefiltert wurde"
+    )
 
 
 @respx.mock
-async def test_die_datensatzsuche_findet_deshalb_nichts():
-    """Die Wirkung des Befunds, am echten Tool statt an der Vermutung."""
-    respx.get(url__startswith=f"{CKAN_BASE}/package_search").mock(
-        return_value=httpx.Response(200, json=fixture_json("ckan_package_search.json"))
+async def test_die_suche_schickt_keinen_organisationsfilter_mehr():
+    """Hält die Behebung fest, an der abgeschickten Anfrage.
+
+    Der Filter war die Ursache des Ausfalls: ein Namensabgleich auf eine
+    Organisation, die es nicht mehr gibt. Diese Zusicherung liest die
+    tatsächlich gestellte Anfrage, nicht die Absicht — kehrt der Filter zurück,
+    fällt sie, und zwar bevor wieder jede Suche leer antwortet.
+    """
+    route = respx.get(url__startswith=f"{CKAN_BASE}/package_search").mock(
+        return_value=httpx.Response(
+            200, json=fixture_json("ckan_package_search_ohne_organisation.json")
+        )
     )
     antwort = await seco_search_datasets(DatasetSearchInput(query="arbeitslose kantone"))
-    assert "Keine SECO-Datensätze" in antwort, (
-        "solange der Filter niemanden trifft, ist die leere Antwort das ehrliche "
-        "Ergebnis — kein Grund, etwas zu erfinden"
+    gestellt = str(route.calls.last.request.url)
+    assert "organization" not in gestellt, f"die Suche filtert wieder: {gestellt}"
+    assert "Keine Datensätze" not in antwort, antwort[:200]
+
+
+@respx.mock
+async def test_jeder_treffer_nennt_seinen_herausgeber():
+    """Ohne Filter stammen die Treffer von anderen Häusern — das muss dranstehen.
+
+    Die aufgezeichnete ungefilterte Suche liefert Datensätze des BFS, mehrerer
+    Kantone und des liechtensteinischen Amts für Statistik. Sie unter der
+    Überschrift «SECO-Datensätze» zu zeigen wäre genau die Verwechslung, die
+    dieser Umbau behebt.
+    """
+    aufzeichnung = fixture_json("ckan_package_search_ohne_organisation.json")
+    respx.get(url__startswith=f"{CKAN_BASE}/package_search").mock(
+        return_value=httpx.Response(200, json=aufzeichnung)
+    )
+    antwort = await seco_search_datasets(DatasetSearchInput(query="arbeitslose", limit=5))
+    assert "SECO-Datensätze" not in antwort, "die Treffer stammen nicht von SECO"
+    assert "Herausgeber" in antwort
+    herausgeber = {
+        (ds.get("organization") or {}).get("name") for ds in aufzeichnung["result"]["results"][:5]
+    }
+    assert len(herausgeber) > 1, (
+        "die Aufzeichnung führt nur einen Herausgeber — dann prüft dieser Test wenig"
     )
 
 
@@ -159,57 +278,6 @@ def test_der_titel_kommt_als_sprachwoerterbuch():
     ds = fixture_json("ckan_package_show.json")["result"]
     assert isinstance(ds["title"], dict), "CKAN liefert den Titel je Sprache"
     assert ds["title"].get("de"), "und mindestens die deutsche Fassung ist gefuellt"
-
-
-@respx.mock
-async def test_der_weg_von_der_ressource_in_die_csv(monkeypatch):
-    """Der zweite Weg des Servers: Datensatz → Ressourcenliste → Datei.
-
-    Er laeuft heute nie an, weil die Suche keinen Datensatz liefert. Genau
-    deshalb wird er hier mit dem aufgezeichneten Datensatz direkt gefuettert —
-    sonst bliebe der ganze CSV-Zweig ungeprueft, bis der Filter repariert ist.
-
-    Die SSRF-Pruefung ist ueberbrueckt, wie in `TestCsvFetchRetry`: sie loest
-    DNS wirklich auf und kehrt ohne Netz zurueck, bevor respx gefragt wird. Hier
-    geht es um den Weg in die CSV, nicht um die Policy — die hat ihre eigenen
-    Tests.
-    """
-
-    async def _erlauben(_url: str) -> None:
-        return None
-
-    monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
-    ds = fixture_json("ckan_package_show.json")["result"]
-    ressource = next(r for r in ds["resources"] if (r.get("format") or "").upper() == "CSV")
-    respx.get(ressource["url"]).mock(
-        return_value=httpx.Response(200, text=fixture_text("ckan_ressource.csv"))
-    )
-    live = await _try_live_csv([ds])
-    assert live is not None, "die aufgezeichnete CSV soll sauber parsen"
-    assert live["headers"], "die Kopfzeile ist die Satzform und bleibt unveraendert"
-    assert live["total_rows"] > 1
-    assert live["delimiter"] == ",", "diese Quelle trennt mit Komma, nicht mit Semikolon"
-
-
-def test_die_aufgezeichnete_csv_traegt_ganze_zeitreihen():
-    """Gekuerzt ist die Zahl der Zeilen, nicht die der Spalten.
-
-    Die Datei beginnt mit einer einzigen Gemeinde im aeltesten Jahr. Eine
-    Kopfauswahl haette weder die Spanne noch das juengste Jahr belegt — und
-    `_detect_latest_period` liest genau die Jahresspalte.
-    """
-    zeilen = [z for z in fixture_text("ckan_ressource.csv").splitlines() if z]
-    kopf = zeilen[0].split(",")
-    assert "INDIKATOR_JAHR" in kopf and "GEBIET_NAME" in kopf
-    jahr = kopf.index("INDIKATOR_JAHR")
-    gebiet = kopf.index("GEBIET_NAME")
-    daten = [z.split(",") for z in zeilen[1:]]
-    gebiete = {z[gebiet] for z in daten}
-    assert len(gebiete) == 2, f"zwei Zeitreihen erwartet, gefunden: {sorted(gebiete)}"
-    for name in gebiete:
-        jahre = sorted(int(z[jahr]) for z in daten if z[gebiet] == name)
-        assert len(jahre) > 10, f"{name} traegt nur {len(jahre)} Jahre — Auswahlregel pruefen"
-        assert jahre == list(range(jahre[0], jahre[-1] + 1)), f"{name} hat Luecken"
 
 
 # --------------------------------------------------------------------------
@@ -328,3 +396,114 @@ def test_die_publikationsliste_nennt_ausgaben():
     assert re.search(r"Ts\d{2}", text) or re.search(r"20\d{2}", text), (
         "die Seite soll Ausgaben oder Jahre nennen"
     )
+
+
+# --------------------------------------------------------------------------
+# Die Werkzeuge an der aufgezeichneten Tabelle
+# --------------------------------------------------------------------------
+
+
+def _mock_jahresreihe() -> None:
+    """Beide Schritte des Servers: `package_show` und dann die XLS-Ressource."""
+    aufzeichnung = fixture_json("ckan_package_show_jahresreihe.json")
+    respx.get(url__startswith=f"{CKAN_BASE}/package_show").mock(
+        return_value=httpx.Response(200, json=aufzeichnung)
+    )
+    xls = next(
+        r
+        for r in aufzeichnung["result"]["resources"]
+        if (r.get("format") or "").upper() in {"XLS", "XLSX"}
+    )
+    respx.get(xls["url"]).mock(
+        return_value=httpx.Response(200, content=fixture_bytes("bfs_jahresreihe.xlsx"))
+    )
+
+
+@respx.mock
+async def test_die_uebersicht_liefert_wieder_zahlen():
+    """Vorher lief dieses Werkzeug nie an eine Quelle — jetzt schon."""
+    _mock_jahresreihe()
+    roh = await seco_get_unemployment_overview(
+        UnemploymentInput(response_format=ResponseFormat.JSON)
+    )
+    daten = json.loads(roh)
+    assert daten["registrierte_arbeitslose_seco"] > 0
+    assert daten["granularity"] == "annual_national"
+    assert "SECO" in daten["source"] and "BFS" in daten["source"], (
+        "die Herkunft nennt beide Häuser: SECOs Zahl, BFS' Veröffentlichung"
+    )
+    # Die drei Reihen kommen getrennt heraus und nicht ineinander gerechnet.
+    assert daten["erwerbslose_ilo_bfs"] != daten["registrierte_arbeitslose_seco"]
+
+
+@respx.mock
+async def test_die_uebersicht_erfindet_keine_kantonale_zahl():
+    """Statt der früheren Rangliste vom April 2025 eine benannte Absage.
+
+    Ein Warnhinweis neben einer Zahl verliert gegen die Zahl: gelesen wird die
+    Quote, nicht der Hinweis. Eine Absage kann man nicht falsch zitieren.
+    """
+    _mock_jahresreihe()
+    roh = await seco_get_unemployment_overview(
+        UnemploymentInput(canton="ZH", response_format=ResponseFormat.JSON)
+    )
+    daten = json.loads(roh)
+    assert daten["data_available"] is False
+    assert "amstat.ch" in " ".join(daten["where"])
+    text = await seco_get_unemployment_overview(UnemploymentInput(canton="ZH"))
+    assert "%" not in text, f"eine Quote in einer Absage ist eine Zahl zu viel: {text[:200]}"
+
+
+@respx.mock
+async def test_die_stellensuchenden_zeigen_den_abstand():
+    """Die Differenz ist die Aussage dieser Reihe, nicht die Zahl allein."""
+    _mock_jahresreihe()
+    daten = json.loads(
+        await seco_get_job_seekers(JobSeekersInput(response_format=ResponseFormat.JSON))
+    )
+    assert daten["registrierte_stellensuchende_seco"] > daten["registrierte_arbeitslose_seco"]
+    assert daten["differenz_in_massnahmen"] > 0
+
+
+async def test_die_jugendarbeitslosigkeit_nennt_keine_beispielzahl():
+    """Die erfundene Zahl ist weg — und darf nicht zurückkommen.
+
+    Vorher stand hier «+2'186 Jugendarbeitslose (+18.6%)» als Beispielwert aus
+    einem Snapshot. Eine als Beispiel eingeführte Zahl wird als Zahl zitiert;
+    der Zusatz «Snapshot» überlebt das Zitieren nicht.
+    """
+    text = await seco_get_youth_unemployment(YouthUnemploymentInput())
+    assert "2'186" not in text and "18.6" not in text
+    # Keine Tausendertrenner und keine Prozentwerte. Jahreszahlen wie das
+    # Pruefdatum sind erlaubt — sie datieren den Befund, statt ihn zu ersetzen.
+    assert not re.search(r"\d[\.\d]*\s?%", text), f"Prozentwert in der Absage: {text[:300]}"
+    assert not re.search(r"\d['’]\d", text), f"Tausenderzahl in der Absage: {text[:300]}"
+    assert "Keine Zahlen verfügbar" in text
+    daten = json.loads(
+        await seco_get_youth_unemployment(
+            YouthUnemploymentInput(response_format=ResponseFormat.JSON)
+        )
+    )
+    assert daten["data_available"] is False
+    assert "amstat" in json.dumps(daten)
+
+
+@respx.mock
+async def test_eine_formaenderung_der_tabelle_wird_gemeldet():
+    """Kommt die Mappe ohne die erwartete Reihe, ist das ein Fehler und keine Null."""
+    aufzeichnung = fixture_json("ckan_package_show_jahresreihe.json")
+    respx.get(url__startswith=f"{CKAN_BASE}/package_show").mock(
+        return_value=httpx.Response(200, json=aufzeichnung)
+    )
+    xls = next(
+        r
+        for r in aufzeichnung["result"]["resources"]
+        if (r.get("format") or "").upper() in {"XLS", "XLSX"}
+    )
+    respx.get(xls["url"]).mock(return_value=httpx.Response(200, content=b"kein xlsx"))
+    # Bewusst eine Ausnahme und keine Zeichenkette: eine Formaenderung ist
+    # nichts, was das Modell mit anderen Argumenten umgehen koennte. `OBS-001`
+    # laesst genau diese Klasse durch, damit FastMCP `isError: true` daraus
+    # macht — dieselbe Regel wie bei `UpstreamSchemaError`.
+    with pytest.raises(sources.TabelleNichtLesbarError, match="nicht lesbar"):
+        await seco_get_unemployment_overview(UnemploymentInput(response_format=ResponseFormat.JSON))
