@@ -45,18 +45,14 @@ Ein Codex-Review auf einem PR wird beantwortet oder behoben, nie ignoriert.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — 0.16.1, an zwei Stellen gepinnt
+**ruff: eine Quelle.** Der Pin `0.16.1` steht in `pyproject.toml` — und
+**nicht** mehr als eigener Install-Schritt in der CI.
 
-`.pre-commit-config.yaml` existiert nicht. Die einzigen beiden Stellen sind:
-
-| Ort | Wert |
-| --- | --- |
-| `.github/workflows/ci.yml` | `ruff==0.16.1` |
-| `pyproject.toml`, `[project.optional-dependencies].dev` | `ruff==0.16.1` |
-
-`pip install -e ".[dev]"` liefert damit genau die Version, mit der die CI
-lintet. Beim Anheben beide Stellen zusammen bumpen — sonst gewinnt der
-CI-Schritt und die lokale Version weicht wieder ab.
+Der CI-Schritt lief nach dem Install der Abhängigkeiten und überschrieb sie.
+Eine Abweichung im Pin konnte deshalb in der CI gar nicht auffallen, sondern
+nur lokal — wo niemand sie erwartet. Ein manuelles Nachinstallieren von ruff
+vor den Gates ist damit nicht mehr nötig und wäre schädlich: Es würde eine
+spätere Anhebung hier stillschweigend überstimmen.
 
 ### Gate-Befehle (wörtlich aus `ci.yml`)
 
