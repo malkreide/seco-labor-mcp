@@ -82,7 +82,16 @@ PYTHONPATH=src pytest tests/ -m "not live" -v
 python scripts/check_version_sync.py
 ```
 
-Matrix: Python 3.11 / 3.12 / 3.13.
+Matrix: Python 3.11 / 3.12 / 3.13. Alle vier laufen in einem Job auf allen
+drei Feldern — keine `if: matrix.python-version`-Ausnahme, kein zweiter
+lint-Job. Ein grünes 3.13 heisst hier also wirklich, dass alles auf 3.13 lief.
+(Im Portfolio nicht selbstverständlich: `swiss-food-safety-mcp` gated zwei
+Gates auf 3.11, `swiss-housing-mcp` und `bakom-mcp` fahren ihre ruff-Gates in
+einem eigenen 3.11-Job.)
+
+Ein `fail-fast: false` steht **nicht** da: Eine rote 3.11 bricht 3.12 und 3.13
+ab, bevor sie etwas sagen. Ein einzelnes rotes Feld heisst dann «der Rest kam
+nicht dazu», nicht «nur dort kaputt».
 
 ### Live-Tests — geplant, DRIFT-005 erfüllt
 
