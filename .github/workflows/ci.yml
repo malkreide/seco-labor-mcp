@@ -24,11 +24,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      # Pin ruff so an upstream release cannot change the default rule set or
-      # formatter and break CI on unrelated, untouched code.
-      - name: Install pinned ruff
-        run: pip install ruff==0.16.1
-
+      # Kein eigener ruff-Install: der Pin kommt mit dem dev-Install oben mit.
+      # Hier stand `pip install ruff==<version>`, das danach lief und gegen
+      # pyproject gewann — ein Bump dort haette in der CI nichts bewirkt.
       - name: Lint
         run: ruff check src/ tests/ scripts/
 

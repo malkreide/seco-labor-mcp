@@ -45,18 +45,19 @@ Ein Codex-Review auf einem PR wird beantwortet oder behoben, nie ignoriert.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — 0.16.1, an zwei Stellen gepinnt
+### ruff — 0.16.1, genau eine Quelle
 
-`.pre-commit-config.yaml` existiert nicht. Die einzigen beiden Stellen sind:
+`ruff==0.16.1` steht in `pyproject.toml`,
+`[project.optional-dependencies].dev`, und sonst nirgends.
+`pip install -e ".[dev]"` liefert damit die Version, mit der die CI lintet;
+Anheben genügt an dieser einen Stelle. Eine `.pre-commit-config.yaml` gibt
+es nicht.
 
-| Ort | Wert |
-| --- | --- |
-| `.github/workflows/ci.yml` | `ruff==0.16.1` |
-| `pyproject.toml`, `[project.optional-dependencies].dev` | `ruff==0.16.1` |
-
-`pip install -e ".[dev]"` liefert damit genau die Version, mit der die CI
-lintet. Beim Anheben beide Stellen zusammen bumpen — sonst gewinnt der
-CI-Schritt und die lokale Version weicht wieder ab.
+**Keine zweite Version in die Workflows schreiben.** `ci.yml` hatte einen
+Schritt `pip install ruff==0.16.1` nach dem dev-Install — der gewinnt gegen
+pyproject, ohne dass etwas rot wird. `tests/test_werkzeug_versionen.py`
+fällt, wenn hier wieder eine Spanne steht oder ein Workflow eine zweite
+Version setzt.
 
 ### Gate-Befehle (wörtlich aus `ci.yml`)
 
