@@ -45,14 +45,19 @@ Ein Codex-Review auf einem PR wird beantwortet oder behoben, nie ignoriert.
 
 ## Teil 2 — Dieses Repo
 
-**ruff: eine Quelle.** Der Pin `0.16.1` steht in `pyproject.toml` — und
-**nicht** mehr als eigener Install-Schritt in der CI.
+### ruff — 0.16.1, genau eine Quelle
 
-Der CI-Schritt lief nach dem Install der Abhängigkeiten und überschrieb sie.
-Eine Abweichung im Pin konnte deshalb in der CI gar nicht auffallen, sondern
-nur lokal — wo niemand sie erwartet. Ein manuelles Nachinstallieren von ruff
-vor den Gates ist damit nicht mehr nötig und wäre schädlich: Es würde eine
-spätere Anhebung hier stillschweigend überstimmen.
+`ruff==0.16.1` steht in `pyproject.toml`,
+`[project.optional-dependencies].dev`, und sonst nirgends.
+`pip install -e ".[dev]"` liefert damit die Version, mit der die CI lintet;
+Anheben genügt an dieser einen Stelle. Eine `.pre-commit-config.yaml` gibt
+es nicht.
+
+**Keine zweite Version in die Workflows schreiben.** `ci.yml` hatte einen
+Schritt `pip install ruff==0.16.1` nach dem dev-Install — der gewinnt gegen
+pyproject, ohne dass etwas rot wird. `tests/test_werkzeug_versionen.py`
+fällt, wenn hier wieder eine Spanne steht oder ein Workflow eine zweite
+Version setzt.
 
 ### Gate-Befehle (wörtlich aus `ci.yml`)
 
