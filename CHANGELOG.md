@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Die Pruefsummen im Fixture-Nachweis waren Zierde.** `PROVENANCE.md` fuehrt
+  je Datei einen SHA-256 — um genau einen Fall zu fangen: eine Aufzeichnung,
+  die nach dem Lauf von Hand nachgebessert wurde. Eine korrigierte Antwort ist
+  wieder eine erfundene, und von aussen ist ihr das nicht anzusehen.
+  Nachgerechnet hat sie kein Test. `test_die_pruefsumme_im_nachweis_stimmt`
+  tut es jetzt, ueber die Bytes auf der Platte statt ueber den Loader — genau
+  die hat der Recorder gehasht.
+
 - **Drei Wächter statt einem, weil zwei den Fall nicht gefangen hätten.**
   `test_beide_pfade_gehen_ueber_ihren_modul_alias` prüft die Module,
   `test_kein_test_patcht_die_wartezeit_am_fremden_modul` die Tests — beide
