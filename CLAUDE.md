@@ -79,6 +79,7 @@ schlägt den Pin, ohne dass der Install etwas meldet.
 ### Gate-Befehle (wörtlich aus `ci.yml`)
 
 ```
+python scripts/check_ruff_pin.py
 ruff check src/ tests/ scripts/
 ruff format --check src/ tests/ scripts/
 PYTHONPATH=src pytest tests/ -m "not live" -v
