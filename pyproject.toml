@@ -70,9 +70,16 @@ dev = [
     # aber mit einer beliebigen Version darin. Lokal gruen und in der CI rot
     # war damit moeglich, ohne dass jemand etwas verursacht hat.
     #
-    # Beim Anheben mit `.github/workflows/ci.yml` zusammen bumpen — der dortige
-    # `pip install ruff==...`-Schritt haelt die Version ein zweites Mal fest,
-    # damit ein aufgeweichter Range hier die Gates nicht still verschiebt.
+    # Diese Zeile ist die einzige Quelle: Anheben genuegt hier, `ci.yml`
+    # installiert keine zweite Version mehr. Der Schritt `pip install
+    # ruff==...`, auf den dieser Absatz frueher verwies, ist entfernt — er
+    # lief nach dem dev-Install und gewann gegen diese Zeile, sodass ein Bump
+    # hier die CI nicht erreichte. `tests/test_werkzeug_versionen.py` faellt,
+    # wenn wieder ein Workflow eine Version setzt.
+    #
+    # Vor dem Lauf `ruff --version` pruefen: ein aelteres ruff frueher im
+    # `PATH` schlaegt den Pin, ohne dass der Install etwas meldet.
+    # `scripts/check_ruff_pin.py` prueft genau das.
     "ruff==0.16.1",
 ]
 
