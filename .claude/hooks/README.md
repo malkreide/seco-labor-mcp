@@ -39,7 +39,10 @@ Jeder Netzaufruf hat eine eigene Frist (Default 5 s, via `SECO_HOOK_FRIST`
 zweite Schranke, falls das Skript selbst je hängen bliebe.
 
 Der Wächter trifft die ganze Prozessgruppe, nicht nur `git`. `timeout` macht
-das von sich aus; der Fallback musste es nachbauen. Ohne das überlebt der
+das von sich aus; der Fallback baut es mit `set -m` nach — bash-eigen und
+damit überall vorhanden, wo dieses Skript läuft. Der erste Anlauf nahm dafür
+`setsid`; das fehlte in genau dem Test, der den Fallback prüft, und der Runner
+meldete den Prozess weiterhin als verwaist, ohne dass ein Gate rot wurde. Ohne das überlebt der
 `ssh`-Enkel den getroffenen `git`-Prozess: Der Hook wäre pünktlich fertig und
 liesse trotzdem bei jedem Start auf schlechter Leitung einen Prozess zurück.
 Die GitHub-Runner meldeten genau das als «Terminate orphan process», ohne dass
