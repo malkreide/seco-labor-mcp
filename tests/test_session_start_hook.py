@@ -341,7 +341,7 @@ def test_frist_greift_auch_ohne_coreutils_timeout(
     # Ein PATH mit git, aber ohne timeout.
     huelle = tmp_path / "bin"
     huelle.mkdir()
-    for werkzeug in ("git", "bash", "sh", "sed", "head", "sleep", "kill", "ssh"):
+    for werkzeug in ("git", "bash", "sh", "sed", "head", "sleep", "ssh"):
         pfad = shutil.which(werkzeug)
         if pfad:
             (huelle / werkzeug).symlink_to(pfad)
@@ -360,8 +360,9 @@ def test_frist_greift_auch_ohne_coreutils_timeout(
     assert dauer < 30, f"Hook brauchte {dauer:.1f}s ohne coreutils-timeout"
 
 
+@pytest.mark.parametrize("mit_coreutils", [True, False], ids=["timeout", "fallback"])
 def test_hook_laesst_keinen_haengenden_prozess_zurueck(
-    klon: pathlib.Path, tmp_path: pathlib.Path
+    klon: pathlib.Path, tmp_path: pathlib.Path, mit_coreutils: bool
 ) -> None:
     """Durch sein reicht nicht — der abgebrochene git darf nichts hinterlassen.
 
@@ -369,21 +370,32 @@ def test_hook_laesst_keinen_haengenden_prozess_zurueck(
     Gruppe. Der eigene Waechter tat das zuerst nicht: er traf nur den
     git-Prozess, waehrend dessen ssh-Enkel weiterlief. Der Hook war damit
     puenktlich fertig und liess trotzdem bei jedem Start auf schlechter
-    Leitung einen Prozess zurueck — die GitHub-Runner meldeten das als
+    Leitung einen Prozess zurueck. Die GitHub-Runner meldeten das als
     «Terminate orphan process», ohne dass ein Gate rot wurde.
+
+    Beide Pfade werden geprueft, weil der erste Anlauf nur den Fallback
+    abdeckte — und dort auch nur mit `setsid` im PATH. Der Runner meldete
+    danach weiter einen verwaisten Prozess, diesmal aus dem Nachbartest,
+    und die Suite blieb trotzdem gruen. Ein Leck-Test, der nur einen von
+    zwei Pfaden kennt, verschiebt das Leck bloss.
     """
     haenger = _stummer_remote(klon, tmp_path)
     kennung = str(haenger)
+    umgebung = {"SECO_HOOK_FRIST": "2", "GIT_SSH_COMMAND": kennung}
 
-    huelle = tmp_path / "bin"
-    huelle.mkdir()
-    for werkzeug in ("git", "bash", "sh", "sed", "head", "sleep", "ssh", "setsid"):
-        pfad = shutil.which(werkzeug)
-        if pfad:
-            (huelle / werkzeug).symlink_to(pfad)
-    assert shutil.which("timeout", path=str(huelle)) is None
+    if not mit_coreutils:
+        huelle = tmp_path / "bin"
+        huelle.mkdir()
+        for werkzeug in ("git", "bash", "sh", "sed", "head", "sleep", "ssh"):
+            pfad = shutil.which(werkzeug)
+            if pfad:
+                (huelle / werkzeug).symlink_to(pfad)
+        assert shutil.which("timeout", path=str(huelle)) is None
+        umgebung["PATH"] = str(huelle)
+    else:
+        assert shutil.which("timeout") is not None, "Aufbau kaputt: kein coreutils-timeout"
 
-    _hook(klon, PATH=str(huelle), SECO_HOOK_FRIST="2", GIT_SSH_COMMAND=kennung)
+    _hook(klon, **umgebung)
 
     # Der Waechter signalisiert, das Aufraeumen des Kernels braucht einen
     # Moment; ein Nachlauf von wenigen Sekunden waere kein Leck.

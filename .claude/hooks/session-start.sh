@@ -46,17 +46,21 @@ mit_frist() {
         timeout "$frist" "$@"
         return $?
     fi
-    # Eigene Prozessgruppe, damit der Waechter unten die ganze Gruppe treffen
-    # kann. Ohne das ueberlebt der ssh-Enkel den getroffenen git-Prozess und
-    # haengt weiter — der Hook waere zwar durch, liesse aber bei jedem Start
-    # auf schlechter Leitung einen Prozess zurueck. (`timeout` macht genau
-    # das von sich aus; der Fallback muss es nachbauen.)
-    if command -v setsid >/dev/null 2>&1; then
-        setsid "$@" &
-    else
-        "$@" &
-    fi
+    # Eigene Prozessgruppe fuer das Kind, damit der Waechter unten die ganze
+    # Gruppe treffen kann. Ohne das ueberlebt der ssh-Enkel den getroffenen
+    # git-Prozess und haengt weiter — der Hook waere zwar puenktlich durch,
+    # liesse aber bei jedem Start auf schlechter Leitung einen Prozess
+    # zurueck. (`timeout` macht das von sich aus; der Fallback muss es
+    # nachbauen.)
+    #
+    # `set -m` statt `setsid`: Es ist bash-eigen und damit ueberall da, wo
+    # dieses Skript laeuft. Der erste Anlauf nahm `setsid` — das fehlte in
+    # genau dem Test, der den Fallback prueft, und der Runner meldete den
+    # Prozess weiterhin als verwaist, ohne dass ein Gate rot wurde.
+    set -m
+    "$@" &
     local aufgabe=$!
+    set +m
     (
         sleep "$frist"
         kill -TERM -"$aufgabe" 2>/dev/null || kill -TERM "$aufgabe" 2>/dev/null
