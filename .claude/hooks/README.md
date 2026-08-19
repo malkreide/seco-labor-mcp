@@ -30,12 +30,20 @@ Still mit Status 0 durch gehen:
 | Standard-Branch nicht ermittelbar | still |
 | detached HEAD | still |
 | `timeout` (coreutils) fehlt | still, eigener Wächter greift |
+| Abgebrochener `git` hat einen hängenden `ssh` | wird mitgenommen, kein Rückstand an Prozessen |
 | Rückstand 0 | still |
 | Rückstand ≥ 1 | **einzige Ausgabe** |
 
 Jeder Netzaufruf hat eine eigene Frist (Default 5 s, via `SECO_HOOK_FRIST`
 änderbar). Zusätzlich steht in `settings.json` ein `timeout` von 15 s als
 zweite Schranke, falls das Skript selbst je hängen bliebe.
+
+Der Wächter trifft die ganze Prozessgruppe, nicht nur `git`. `timeout` macht
+das von sich aus; der Fallback musste es nachbauen. Ohne das überlebt der
+`ssh`-Enkel den getroffenen `git`-Prozess: Der Hook wäre pünktlich fertig und
+liesse trotzdem bei jedem Start auf schlechter Leitung einen Prozess zurück.
+Die GitHub-Runner meldeten genau das als «Terminate orphan process», ohne dass
+ein Gate rot wurde.
 
 Git wird so aufgerufen, dass es unter keinen Umständen nach Zugangsdaten
 fragt (`GIT_TERMINAL_PROMPT=0`, `BatchMode=yes`). Ein Passwort-Prompt in

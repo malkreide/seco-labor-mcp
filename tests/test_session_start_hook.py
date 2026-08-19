@@ -360,6 +360,44 @@ def test_frist_greift_auch_ohne_coreutils_timeout(
     assert dauer < 30, f"Hook brauchte {dauer:.1f}s ohne coreutils-timeout"
 
 
+def test_hook_laesst_keinen_haengenden_prozess_zurueck(
+    klon: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """Durch sein reicht nicht — der abgebrochene git darf nichts hinterlassen.
+
+    `timeout` legt sein Kind in eine eigene Prozessgruppe und trifft die
+    Gruppe. Der eigene Waechter tat das zuerst nicht: er traf nur den
+    git-Prozess, waehrend dessen ssh-Enkel weiterlief. Der Hook war damit
+    puenktlich fertig und liess trotzdem bei jedem Start auf schlechter
+    Leitung einen Prozess zurueck — die GitHub-Runner meldeten das als
+    «Terminate orphan process», ohne dass ein Gate rot wurde.
+    """
+    haenger = _stummer_remote(klon, tmp_path)
+    kennung = str(haenger)
+
+    huelle = tmp_path / "bin"
+    huelle.mkdir()
+    for werkzeug in ("git", "bash", "sh", "sed", "head", "sleep", "ssh", "setsid"):
+        pfad = shutil.which(werkzeug)
+        if pfad:
+            (huelle / werkzeug).symlink_to(pfad)
+    assert shutil.which("timeout", path=str(huelle)) is None
+
+    _hook(klon, PATH=str(huelle), SECO_HOOK_FRIST="2", GIT_SSH_COMMAND=kennung)
+
+    # Der Waechter signalisiert, das Aufraeumen des Kernels braucht einen
+    # Moment; ein Nachlauf von wenigen Sekunden waere kein Leck.
+    for _ in range(20):
+        uebrig = subprocess.run(
+            ["pgrep", "-f", kennung], capture_output=True, text=True
+        ).stdout.split()
+        if not uebrig:
+            break
+        time.sleep(0.25)
+    else:
+        pytest.fail(f"Prozesse ueberleben den Hook: {uebrig}")
+
+
 def test_hook_fragt_nie_nach_zugangsdaten(klon: pathlib.Path) -> None:
     """Ein Passwort-Prompt ohne Terminal ist der Haenger in Reinform."""
     inhalt = _HOOK.read_text(encoding="utf-8")
