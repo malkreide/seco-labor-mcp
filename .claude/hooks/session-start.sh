@@ -46,11 +46,20 @@ mit_frist() {
         timeout "$frist" "$@"
         return $?
     fi
-    "$@" &
+    # Eigene Prozessgruppe, damit der Waechter unten die ganze Gruppe treffen
+    # kann. Ohne das ueberlebt der ssh-Enkel den getroffenen git-Prozess und
+    # haengt weiter — der Hook waere zwar durch, liesse aber bei jedem Start
+    # auf schlechter Leitung einen Prozess zurueck. (`timeout` macht genau
+    # das von sich aus; der Fallback muss es nachbauen.)
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$@" &
+    else
+        "$@" &
+    fi
     local aufgabe=$!
     (
         sleep "$frist"
-        kill -TERM "$aufgabe" 2>/dev/null
+        kill -TERM -"$aufgabe" 2>/dev/null || kill -TERM "$aufgabe" 2>/dev/null
     ) &
     local waechter=$!
     wait "$aufgabe" 2>/dev/null
