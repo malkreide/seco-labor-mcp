@@ -138,16 +138,16 @@ wie der Code: Nichts ist rot, weil nichts geprüft wird, worauf es ankommt.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — 0.16.1, genau eine Quelle
+### ruff — 0.16.3, genau eine Quelle
 
-`ruff==0.16.1` steht in `pyproject.toml`,
+`ruff==0.16.3` steht in `pyproject.toml`,
 `[project.optional-dependencies].dev`, und sonst nirgends.
 `pip install -e ".[dev]"` liefert damit die Version, mit der die CI lintet;
 Anheben genügt an dieser einen Stelle. Eine `.pre-commit-config.yaml` gibt
 es nicht.
 
 **Keine zweite Version in die Workflows schreiben.** `ci.yml` hatte einen
-Schritt `pip install ruff==0.16.1` nach dem dev-Install — der gewinnt gegen
+Schritt `pip install ruff==0.16.3` nach dem dev-Install — der gewinnt gegen
 pyproject, ohne dass etwas rot wird. `tests/test_werkzeug_versionen.py`
 fällt, wenn hier wieder eine Spanne steht oder ein Workflow eine zweite
 Version setzt.
