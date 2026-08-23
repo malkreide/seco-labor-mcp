@@ -362,6 +362,27 @@ restriction in its `source` field, because a README is not passed to the model.
 
 ---
 
+## MCP Protocol Version
+
+The protocol version is negotiated at the `initialize` handshake by the SDK,
+not chosen by this server. The revision it is built and audited against is
+**`2025-11-25`**, which is `LATEST_PROTOCOL_VERSION` in the pinned `mcp`
+release that fastmcp brings in.
+
+`tests/test_protocol_version.py` holds three things against each other: this
+line, that SDK constant, and the revision a real handshake against the server
+object actually returns. An SDK bump that changes the revision therefore fails
+CI instead of drifting silently.
+
+The sister servers in this portfolio pin a *pair* of revisions — a handshake
+ceiling and a modern one — because `mcp` 2.x serves two protocol eras over the
+same server. fastmcp 3.x pins `mcp` 1.x, where `mcp.types.version` does not
+exist and one revision is the whole story. `test_das_sdk_kennt_hier_nur_eine_aera`
+is tied to the SDK rather than to this paragraph and fails the day an upgrade
+brings the two-era constants in.
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.

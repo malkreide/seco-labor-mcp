@@ -268,6 +268,27 @@ weitergereicht wird.
 
 ---
 
+## MCP-Protokollversion
+
+Die Protokollversion handelt das SDK beim `initialize`-Handshake aus, dieser
+Server wählt sie nicht. Die Revision, gegen die er gebaut und geprüft ist,
+lautet **`2025-11-25`** — das ist `LATEST_PROTOCOL_VERSION` in der `mcp`-Version,
+die fastmcp hereinzieht.
+
+`tests/test_protocol_version.py` hält drei Dinge gegeneinander: diese Zeile,
+jene SDK-Konstante und die Revision, die ein echter Handshake gegen das
+Server-Objekt tatsächlich zurückgibt. Ein SDK-Bump, der die Revision ändert,
+macht die CI rot, statt lautlos zu driften.
+
+Die Schwester-Server im Portfolio pinnen ein *Paar* von Revisionen — eine
+Handshake-Obergrenze und eine moderne —, weil `mcp` 2.x zwei Protokoll-Ären über
+denselben Server bedient. fastmcp 3.x pinnt `mcp` 1.x, wo es `mcp.types.version`
+nicht gibt und eine Revision die ganze Geschichte ist.
+`test_das_sdk_kennt_hier_nur_eine_aera` ist an das SDK gebunden statt an diesen
+Absatz und fällt, sobald ein Upgrade die Zwei-Ären-Konstanten hereinzieht.
+
+---
+
 ## Mitwirken
 
 Entwicklungsrichtlinien finden Sie in [CONTRIBUTING.md](CONTRIBUTING.md)
