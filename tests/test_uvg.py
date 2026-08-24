@@ -16,7 +16,7 @@ import httpx
 import pytest
 import respx
 
-from seco_labor_mcp import uvg
+from seco_labor_mcp import server, uvg
 from seco_labor_mcp.server import (
     UvgBranchInput,
     UvgOverviewInput,
@@ -127,7 +127,7 @@ def _fast_backoff(monkeypatch):
     uvg.uvg_cache_clear()
 
 
-async def test_die_fixture_nullt_die_wartezeit_wirklich():
+async def test_die_fixture_nullt_die_wartezeit_wirklich(monkeypatch):
     """Macht aus der Laufzeit ein Signal.
 
     Die beiden Waechter in `test_retry_policy.py` decken zwei Faelle ab: das
@@ -137,10 +137,21 @@ async def test_die_fixture_nullt_die_wartezeit_wirklich():
     die den Backoff laengst nicht mehr steuerte. Kein Patch am fremden Modul,
     kein direkter `asyncio.sleep`, und trotzdem 96 Sekunden Wartezeit.
 
-    Dagegen hilft nur, die Wartezeit selbst zu messen. Der Abstand ist gross
-    genug, dass die Messung nicht wackelt: mit wirksamer Fixture braucht ein
-    erschoepfter Retry Millisekunden, ohne sie die Leiter 2+4+8 = 14 Sekunden.
-    Eine Sekunde Schranke liegt zwei Groessenordnungen daneben.
+    Dagegen hilft nur, die Wartezeit selbst zu messen — und dann auch wirklich
+    sie und nicht die Maschinerie drumherum. Gemessen am 24.8.2026 kostete das
+    Fenster ohne jede Wartezeit **349 ms**: rund 75 ms je Versuch fuer einen
+    eigenen httpx-Client samt SSL-Kontext (unter respx ist `_HTTP_CLIENT` None,
+    also baut jeder der vier Versuche seinen eigenen) und 56 ms fuer die
+    DNS-Aufloesung der SSRF-Pruefung. Gegen eine Schranke von 1000 ms ist das
+    kein Faktor 100, sondern knapp 3 — am 23.8.2026 hat ein ausgelasteter
+    Runner den Test damit rot gemacht (1,29 s; derselbe Commit lief im Re-Run
+    ohne Aenderung gruen).
+
+    Beide Nahtstellen laufen deshalb **vor** dem Start der Uhr warm. Uebrig
+    bleiben 7 ms, und erst damit stimmt die Rechnung, die diesen Test traegt:
+    mit wirksamer Fixture Millisekunden, ohne sie mindestens 1+2+4 = 7 Sekunden
+    (Leiter 2/4/8, Jitter [0.5x, 1.5x]). Die Schranke liegt zwischen beiden,
+    zwei Groessenordnungen ueber dem Rauschen und drei unter dem Signal.
     """
     import time as _time
 
@@ -148,12 +159,21 @@ async def test_die_fixture_nullt_die_wartezeit_wirklich():
     # wirklich auf, und `example.test` scheitert daran, bevor der Retry
     # ueberhaupt anlaeuft. Gemessen werden soll die Wartezeit, nicht die Policy.
     uvg.uvg_cache_clear()
-    with respx.mock:
-        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(return_value=httpx.Response(503))
-        begonnen = _time.monotonic()
-        with pytest.raises(uvg.UvgSourceUnavailableError):
-            await uvg._fetch_bytes(uvg.UVG_KEY_FIGURES_URL)
-        gebraucht = _time.monotonic() - begonnen
+    await server._validate_external_url(uvg.UVG_KEY_FIGURES_URL)
+    # Ein gepoolter Client fuer alle vier Versuche — derselbe Weg, den
+    # `_client_scope` unter Lifespan nimmt. Ohne ihn baut jeder Versuch einen
+    # neuen SSL-Kontext, und genau das ist der Posten, der die Messung traegt.
+    client = httpx.AsyncClient(**server._HTTP_KWARGS)
+    monkeypatch.setattr(server, "_HTTP_CLIENT", client)
+    try:
+        with respx.mock:
+            respx.get(uvg.UVG_KEY_FIGURES_URL).mock(return_value=httpx.Response(503))
+            begonnen = _time.monotonic()
+            with pytest.raises(uvg.UvgSourceUnavailableError):
+                await uvg._fetch_bytes(uvg.UVG_KEY_FIGURES_URL)
+            gebraucht = _time.monotonic() - begonnen
+    finally:
+        await client.aclose()
     uvg.uvg_cache_clear()
 
     assert gebraucht < 1.0, (
