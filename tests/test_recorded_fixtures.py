@@ -108,6 +108,85 @@ def test_die_gepinnte_kennung_zeigt_auf_den_aufgezeichneten_datensatz():
     )
 
 
+DEUTSCHE_MAPPE = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346864/master"
+FRANZOESISCHE_MAPPE = "https://dam-api.bfs.admin.ch/hub/api/dam/assets/36346867/master"
+
+
+def test_der_datensatz_fuehrt_die_tabelle_zweimal():
+    """Die Voraussetzung des naechsten Tests, an der Aufzeichnung belegt.
+
+    Ohne diese Zusicherung prueft die Sprachwahl unten irgendwann nichts mehr:
+    faellt die franzoesische Mappe aus dem Datensatz, waehlt auch ein
+    reihenfolgeblinder Griff wieder richtig, und der Test bliebe gruen, ohne
+    dass die Regel noch gilt.
+    """
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    mappen = [r for r in ds["resources"] if (r.get("format") or "").upper() in {"XLS", "XLSX"}]
+    urls = {r["url"] for r in mappen}
+    assert urls == {DEUTSCHE_MAPPE, FRANZOESISCHE_MAPPE}, urls
+    sprachen = {r["url"]: _server_mod._ressourcensprachen(r) for r in mappen}
+    assert "de" in sprachen[DEUTSCHE_MAPPE]
+    assert "de" not in sprachen[FRANZOESISCHE_MAPPE]
+
+
+@pytest.mark.parametrize("umgedreht", [False, True])
+def test_die_mappe_wird_nach_sprache_gewaehlt_und_nicht_nach_reihenfolge(umgedreht):
+    """Der Fehlschlag der Live-Laeufe vom 25. und 26.8.2026, offline nachgestellt.
+
+    Beide Mappen tragen Format `XLS` und beide das Blatt `T3.3.0.1`; uebersetzt
+    sind nur die Zeilenbeschriftungen. Wer die erste XLS-Ressource nimmt, liest
+    die franzoesische, sobald CKAN sie zuerst nennt — und `parse_jahresreihe`
+    meldet dann `Reihen nicht gefunden` mit franzoesischen Beschriftungen.
+    Genau so stand es in beiden roten Laeufen.
+
+    Der umgedrehte Fall ist die Gegenprobe: mit der alten Auswahl
+    (`next(... format == XLS ...)`) faellt er, mit der Sprachwahl nicht.
+    """
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    if umgedreht:
+        ds["resources"] = list(reversed(ds["resources"]))
+    assert _server_mod._deutsche_xls_ressource(ds)["url"] == DEUTSCHE_MAPPE
+
+
+def test_ohne_deutsche_mappe_wird_das_benannt_statt_uebersetzt_gelesen():
+    """Verschwindet die deutsche Ausgabe, ist das eine benannte Ausnahme.
+
+    Die franzoesische stillschweigend zu nehmen hiesse: ein Parser, der
+    deutsche Beschriftungen sucht, laeuft auf uebersetzte — dieselbe leere
+    Antwort, die dieser Server schon einmal hatte.
+    """
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    ds["resources"] = [r for r in ds["resources"] if r.get("url") == FRANZOESISCHE_MAPPE]
+    with pytest.raises(_server_mod.UpstreamSchemaError, match="deutschsprachig"):
+        _server_mod._deutsche_xls_ressource(ds)
+
+
+def test_ohne_jede_sprachangabe_bleibt_nur_die_erste_mappe():
+    """Wo die Quelle nichts sagt, gibt es nichts zu entscheiden.
+
+    Kein Freibrief: Sobald *eine* Ressource eine Sprache nennt, greift der
+    Test darueber. Diese Zusicherung haelt nur fest, dass ein Datensatz ohne
+    jede Sprachangabe weiter bedient wird, statt an der neuen Regel zu
+    scheitern.
+    """
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    for r in ds["resources"]:
+        r["language"] = []
+        r["title"] = ""
+    mappen = [r for r in ds["resources"] if (r.get("format") or "").upper() == "XLS"]
+    assert _server_mod._deutsche_xls_ressource(ds)["url"] == mappen[0]["url"]
+
+
+def test_ohne_mappe_bleibt_es_bei_der_alten_meldung():
+    """Kein Format-Rueckschritt: Fehlt jede Tabellenressource, sagt der Fehler das."""
+    ds = fixture_json("ckan_package_show_jahresreihe.json")["result"]
+    ds["resources"] = [
+        r for r in ds["resources"] if (r.get("format") or "").upper() not in {"XLS", "XLSX"}
+    ]
+    with pytest.raises(_server_mod.UpstreamSchemaError, match="keine XLS-Ressource"):
+        _server_mod._deutsche_xls_ressource(ds)
+
+
 def test_die_drei_reihen_stehen_in_der_aufgezeichneten_tabelle():
     """Beschriftungen wörtlich, nicht über die Zeilenposition geraten."""
     daten = sources.parse_jahresreihe(fixture_bytes("bfs_jahresreihe.xlsx"))

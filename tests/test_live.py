@@ -18,7 +18,9 @@ from seco_labor_mcp.server import (
     YouthUnemploymentInput,
     _bfs_jahresreihe,
     _ckan_get_dataset,
+    _deutsche_xls_ressource,
     _kantonsreihe,
+    _ressourcensprachen,
     seco_get_youth_unemployment,
     seco_list_cantons,
     seco_search_datasets,
@@ -60,6 +62,22 @@ class TestLiveAPI:
             assert formate & {"XLS", "XLSX"}, (
                 f"{datensatz.slug} führt keine Tabellenressource mehr: {sorted(formate)}"
             )
+
+    @pytest.mark.asyncio
+    async def test_die_deutsche_mappe_liegt_noch_im_datensatz(self):
+        """Der Datensatz fuehrt die Tabelle deutsch und franzoesisch.
+
+        Beide tragen Format `XLS` und beide das Blatt `T3.3.0.1`; uebersetzt
+        sind nur die Zeilenbeschriftungen, nach denen `sources.REIHEN` sucht.
+        Ueber die Reihenfolge seiner Ressourcen sagt CKAN nichts zu — am 25.
+        und 26.8.2026 stand die franzoesische vorn, und die Live-Suite fiel
+        beide Male. Verschwindet die deutsche Ausgabe, soll das hier stehen
+        und nicht als `Reihen nicht gefunden` aus dem Parser kommen.
+        """
+        paket = await _ckan_get_dataset(sources.JAHRESREIHE.ckan_id)
+        ds = paket["result"]
+        gewaehlt = _deutsche_xls_ressource(ds)
+        assert "de" in _ressourcensprachen(gewaehlt), gewaehlt.get("url")
 
     @pytest.mark.asyncio
     async def test_die_gepinnten_kantone_existieren_noch(self):
