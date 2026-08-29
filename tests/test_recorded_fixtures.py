@@ -724,6 +724,166 @@ def test_das_register_nennt_genau_die_kantone_mit_daten():
 
 
 # --------------------------------------------------------------------------
+# Welche der Ressourcen eines Datensatzes gelesen wird
+# --------------------------------------------------------------------------
+
+# Die Kopfzeile der zweiten CSV-Ressource von `arbeitsmarktstatistik`, so
+# beobachtet am 2026-08-29 unter `https://data.zg.ch/store/1/resource/1334`
+# («Arbeitslose nach Altersgruppe»). Nur die Kopfzeile ist hier von Belang: sie
+# trägt drei der vier Pflichtspalten und **nicht** `kennzahl`. Die Datenzeile
+# darunter ist erfunden und behauptet nichts über Zug — belegt wird an ihr
+# nichts, gebraucht wird sie nur, damit die Datei eine Datei ist.
+ZG_ALTERSGRUPPEN = b"jahr,monat,altersgruppe,anzahl\n2026,Juli,15-24 Jahre,341\n"
+
+ZG_REIHE_URL = "https://example.test/zg_arbeitsmarktstatistik.csv"
+ZG_ALTER_URL = "https://example.test/zg_altersgruppen.csv"
+
+
+def _mock_zwei_ressourcen(*ressourcen: tuple[str, bytes]) -> respx.Route:
+    """Ein Paket mit mehreren CSV-Ressourcen, in genau dieser Reihenfolge."""
+    reihe = kantone.KANTONE["ZG"]
+    respx.get(
+        url__startswith=f"{CKAN_BASE}/package_show", params__contains={"id": reihe.ckan_id}
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "result": {
+                    "id": reihe.ckan_id,
+                    "name": reihe.slug,
+                    "metadata_modified": "2026-08-29T00:00:00",
+                    "resources": [{"format": "CSV", "url": url} for url, _ in ressourcen],
+                },
+            },
+        )
+    )
+    letzte = None
+    for url, inhalt in ressourcen:
+        letzte = respx.get(url).mock(return_value=httpx.Response(200, content=inhalt))
+    return letzte
+
+
+@pytest.fixture
+def _netz_erlauben(monkeypatch):
+    async def _erlauben(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
+
+
+@pytest.mark.parametrize("reihe_zuerst", [True, False])
+@respx.mock
+async def test_zug_waehlt_die_reihe_und_nicht_die_altersgruppen(reihe_zuerst, _netz_erlauben):
+    """Über die Reihenfolge seiner Ressourcen sagt CKAN nichts zu.
+
+    `arbeitsmarktstatistik` führt zwei CSV-Ressourcen: die Reihe
+    (`jahr,monat,kennzahl,anzahl`) und eine nach Altersgruppen
+    (`jahr,monat,altersgruppe,anzahl`). Sie unterscheiden sich in genau einer
+    Spalte. Wer die erste nimmt, liest an manchen Tagen die falsche — dieselbe
+    Klasse wie die französische BFS-Mappe, nur dass hier `kennzahl` fehlt statt
+    einer deutschen Beschriftung.
+
+    Gegenprobe ist der umgedrehte Fall: mit `next(... CSV ...)` fällt er.
+    """
+    reihe_res = (ZG_REIHE_URL, fixture_bytes("kanton_zg.csv"))
+    alter_res = (ZG_ALTER_URL, ZG_ALTERSGRUPPEN)
+    _mock_zwei_ressourcen(*((reihe_res, alter_res) if reihe_zuerst else (alter_res, reihe_res)))
+
+    reihe = kantone.KANTONE["ZG"]
+    url, payload, geaendert = await _server_mod._csv_mit_den_erwarteten_spalten(
+        reihe.ckan_id, reihe.slug, reihe.felder, reihe.trennzeichen
+    )
+    assert url == ZG_REIHE_URL
+    assert kantone.fehlende_felder(payload, reihe.trennzeichen, reihe.felder) == []
+    assert geaendert == "2026-08-29"
+
+
+@respx.mock
+async def test_die_passende_ressource_wird_genau_einmal_geholt(_netz_erlauben):
+    """Steht die richtige vorn, kostet die Auswahl keinen zusätzlichen Abruf.
+
+    Sonst wäre der Preis der Reihenfolgeunabhängigkeit, dass jeder Aufruf jede
+    Ressource des Pakets herunterlädt — bezahlt an einer Quelle, die ihre
+    TLS-Verhandlung ohnehin sporadisch abbricht.
+    """
+    zweite = _mock_zwei_ressourcen(
+        (ZG_REIHE_URL, fixture_bytes("kanton_zg.csv")),
+        (ZG_ALTER_URL, ZG_ALTERSGRUPPEN),
+    )
+    reihe = kantone.KANTONE["ZG"]
+    await _server_mod._csv_mit_den_erwarteten_spalten(
+        reihe.ckan_id, reihe.slug, reihe.felder, reihe.trennzeichen
+    )
+    assert not zweite.called, "die zweite Ressource wurde geholt, obwohl die erste passte"
+
+
+@respx.mock
+async def test_passt_keine_ressource_werden_alle_benannt(_netz_erlauben):
+    """Eine Absage, die nur «keine passende CSV» sagt, verlängert die Suche.
+
+    Genannt wird deshalb je Kandidat, welche Spalten fehlten — das ist der
+    Unterschied zwischen «die Quelle hat umbenannt» und «wir greifen daneben».
+    """
+    _mock_zwei_ressourcen(
+        (ZG_ALTER_URL, ZG_ALTERSGRUPPEN),
+        (ZG_REIHE_URL, b"etwas,ganz,anderes\n1,2,3\n"),
+    )
+    reihe = kantone.KANTONE["ZG"]
+    with pytest.raises(_server_mod.UpstreamSchemaError) as fehler:
+        await _server_mod._csv_mit_den_erwarteten_spalten(
+            reihe.ckan_id, reihe.slug, reihe.felder, reihe.trennzeichen
+        )
+    meldung = str(fehler.value)
+    assert ZG_ALTER_URL in meldung and ZG_REIHE_URL in meldung
+    assert "kennzahl" in meldung
+
+
+@respx.mock
+async def test_eine_kopfzeile_ohne_datenzeilen_gilt_als_passend(_netz_erlauben):
+    """Leer ist nicht dasselbe wie umbenannt, und beides braucht seine Meldung.
+
+    Die Auswahl liest die Kopfzeile über `fieldnames`, nicht über die erste
+    Datenzeile. Sonst hiesse eine Quelle, die gerade nichts liefert, «Spalten
+    fehlen» — eine falsche Fährte genau dann, wenn ohnehin etwas nicht stimmt.
+    Die leere Reihe meldet danach der Adapter, mit seinem eigenen Satz.
+    """
+    _mock_zwei_ressourcen((ZG_REIHE_URL, b"jahr,monat,kennzahl,anzahl\n"))
+    reihe = kantone.KANTONE["ZG"]
+    url, payload, _ = await _server_mod._csv_mit_den_erwarteten_spalten(
+        reihe.ckan_id, reihe.slug, reihe.felder, reihe.trennzeichen
+    )
+    assert url == ZG_REIHE_URL
+    with pytest.raises(kantone.KantonsReiheNichtLesbarError, match="keine Zeilen"):
+        kantone.parse_zg(payload, reihe, None)
+
+
+def test_zug_meldet_eine_umbenannte_quotenspalte():
+    """Der zweite Datensatz wurde bis zum 2026-08-29 ungeprüft gelesen.
+
+    `parse_zg` griff mit `.get("quote")` zu. Eine umbenannte Spalte lieferte
+    damit für jede Zeile `None`, keine Ausnahme und eine Antwort, in der beide
+    Quoten fehlten — die Anzahlen aus der ersten Datei standen ja noch da. Und
+    die Jugendarbeitslosigkeit gibt es bei Zug **nur** als Quote: still
+    verschwunden wäre genau die Zahl, die der `hinweis` als einzigen Weg
+    ausweist.
+    """
+    reihe = kantone.KANTONE["ZG"]
+    haupt = fixture_bytes("kanton_zg.csv")
+    quoten = fixture_bytes("kanton_zg_quoten.csv")
+
+    vollstaendig = kantone.parse_zg(haupt, reihe, quoten)
+    juengste = vollstaendig["nach_periode"][sorted(vollstaendig["nach_periode"])[-1]]
+    assert "Jugendarbeitslosenquote" in juengste, (
+        "die Aufzeichnung trägt die Quote nicht mehr — dann prüft dieser Test nichts"
+    )
+
+    umbenannt = quoten.replace(b"quote", b"wert", 1)
+    with pytest.raises(kantone.KantonsReiheNichtLesbarError, match=r"ZG \(Quoten\).*quote"):
+        kantone.parse_zg(haupt, reihe, umbenannt)
+
+
+# --------------------------------------------------------------------------
 # Die Werkzeuge über der kantonalen Schicht
 # --------------------------------------------------------------------------
 
