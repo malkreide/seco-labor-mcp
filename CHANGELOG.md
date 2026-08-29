@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Behoben
+
+- **Die Live-Suite las an manchen Tagen die französische Arbeitsmappe.** Der
+  gepinnte BFS-Datensatz führt dieselbe Tabelle zweimal — `je-d-03.03.00.01`
+  und `je-f-03.03.00.01`. Beide tragen Format `XLS`, beide das Blatt
+  `T3.3.0.1`; übersetzt sind nur die Zeilenbeschriftungen, nach denen
+  `sources.REIHEN` wörtlich sucht. `_bfs_jahresreihe` nahm die *erste*
+  XLS-Ressource, und über deren Reihenfolge sagt CKAN nichts zu.
+
+  Ergebnis war ein Münzwurf: die nächtlichen Läufe vom 25. und 26.8.2026 fielen
+  mit «Reihen nicht gefunden» und französischen Beschriftungen in der Meldung,
+  der Lauf davor und die beiden danach waren grün — bei unverändertem Code und
+  unveränderter Quelle. Als Ausfall der Quelle gelesen wäre das ein Fehlalarm
+  gewesen, als Formänderung eine falsche Diagnose.
+
+  `_deutsche_xls_ressource` wählt jetzt nach Sprache statt nach Position, aus
+  dem DCAT-Feld `language` und ersatzweise den nicht leeren Schlüsseln des
+  mehrsprachigen `title`. Bekennt sich keine Ressource zu einer Sprache, bleibt
+  es beim bisherigen Griff — dann gibt es nichts zu entscheiden. Bekennen sie
+  sich und Deutsch ist nicht dabei, ist das eine benannte Ausnahme und keine
+  übersetzte Mappe, die als deutsche durchgeht.
+
+  Die Aufzeichnung vom 2026-08-15 trägt beide Mappen bereits, und die
+  Reihenfolge-Gegenprobe in `test_recorded_fixtures.py` dreht sie um: mit der
+  alten Auswahl fällt sie, mit der neuen nicht. Der Fehlschlag ist damit
+  offline reproduzierbar und hängt nicht daran, in welcher Reihenfolge CKAN
+  gerade antwortet.
+
 ### Hinzugefügt
 
 - **Ein Gate für die MCP-Protokollrevision.** Bisher stand dazu nirgends etwas —

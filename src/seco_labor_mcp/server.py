@@ -609,27 +609,77 @@ async def _kantonsreihe(kanton: str) -> dict[str, Any]:
     return daten
 
 
-async def _bfs_jahresreihe() -> dict[str, Any]:
-    """Holt die gepinnte BFS-Tabelle und liest die drei SECO-Reihen daraus.
+def _ressourcensprachen(ressource: dict) -> set[str]:
+    """Die Sprachen, zu denen sich eine CKAN-Ressource bekennt.
 
-    Zweistufig mit Absicht: erst ``package_show`` auf die gepinnte UUID, dann
-    die XLS-Ressource, die *dort* steht. Die Asset-URL des BFS wird damit
-    bewusst nicht zweitgepinnt — sie hängt an einer Asset-Nummer, die sich bei
-    jeder Neupublikation ändert. Gepinnt ist nur die Kennung, die stabil sein
-    soll; alles andere wird bei jedem Abruf frisch gelesen.
+    Zwei Signale, weil beide fehlen koennen: das DCAT-Feld ``language`` und
+    die nicht leeren Schluessel des mehrsprachigen ``title``. Am 2026-08-29
+    trug die gepinnte Jahresreihe beide, aber nur das erste ist Pflicht.
     """
-    paket = await _ckan_get_dataset(sources.JAHRESREIHE.ckan_id)
-    ds = _ckan_result(paket, "package_show")
-    xls = next(
-        (r for r in ds.get("resources", []) if (r.get("format") or "").upper() in {"XLS", "XLSX"}),
-        None,
-    )
-    if xls is None or not xls.get("url"):
+    codes = {str(s).lower() for s in (ressource.get("language") or []) if s}
+    titel = ressource.get("title")
+    if isinstance(titel, dict):
+        codes |= {str(k).lower() for k, v in titel.items() if isinstance(v, str) and v.strip()}
+    return codes
+
+
+def _deutsche_xls_ressource(ds: dict) -> dict:
+    """Die deutschsprachige Arbeitsmappe des Datensatzes — nicht die erstbeste.
+
+    Der Datensatz fuehrt dieselbe Tabelle zweimal, deutsch (``je-d-03.03.00.01``)
+    und franzoesisch (``je-f-03.03.00.01``). Beide tragen Format ``XLS``, beide
+    das Blatt ``T3.3.0.1``; uebersetzt sind nur die Zeilenbeschriftungen, und
+    ``sources.REIHEN`` haelt die deutschen woertlich. Ueber die Reihenfolge
+    seiner Ressourcen sagt CKAN nichts zu — wer die erste XLS nimmt, liest an
+    manchen Tagen die franzoesische Mappe. Genau das geschah in den Live-Laeufen
+    vom 25. und 26.8.2026: beide Male ``Reihen nicht gefunden`` mit
+    franzoesischen Beschriftungen in der Meldung, waehrend der Lauf davor und
+    die beiden danach gruen waren. Ein Muenzwurf, kein Ausfall der Quelle.
+
+    Bekennt sich keine Ressource zu einer Sprache, bleibt nichts als die erste
+    — dann gibt es nichts zu entscheiden. Bekennen sie sich, ist Deutsch aber
+    nicht dabei, ist das eine benannte Ausnahme und keine franzoesische Mappe,
+    die als deutsche durchgeht.
+    """
+    kandidaten = [
+        r
+        for r in ds.get("resources", [])
+        if (r.get("format") or "").upper() in {"XLS", "XLSX"} and r.get("url")
+    ]
+    if not kandidaten:
         raise UpstreamSchemaError(
             f"Datensatz {sources.JAHRESREIHE.slug!r} führt keine XLS-Ressource mehr. "
             f"Vorhandene Formate: "
             f"{sorted({r.get('format') for r in ds.get('resources', [])})}"
         )
+    deutsch = [r for r in kandidaten if "de" in _ressourcensprachen(r)]
+    if deutsch:
+        return deutsch[0]
+    sprachen = sorted({s for r in kandidaten for s in _ressourcensprachen(r)})
+    if sprachen:
+        raise UpstreamSchemaError(
+            f"Datensatz {sources.JAHRESREIHE.slug!r} führt {len(kandidaten)} "
+            f"XLS-Ressource(n), keine davon deutschsprachig. Gefundene Sprachen: "
+            f"{sprachen}. Die Zeilenbeschriftungen in `sources.REIHEN` sind deutsch."
+        )
+    return kandidaten[0]
+
+
+async def _bfs_jahresreihe() -> dict[str, Any]:
+    """Holt die gepinnte BFS-Tabelle und liest die drei SECO-Reihen daraus.
+
+    Zweistufig mit Absicht: erst ``package_show`` auf die gepinnte UUID, dann
+    die deutschsprachige XLS-Ressource, die *dort* steht. Die Asset-URL des BFS
+    wird damit bewusst nicht zweitgepinnt — sie hängt an einer Asset-Nummer, die
+    sich bei jeder Neupublikation ändert. Gepinnt ist nur die Kennung, die stabil
+    sein soll; alles andere wird bei jedem Abruf frisch gelesen.
+
+    Welche der beiden Mappen es sein muss, entscheidet
+    ``_deutsche_xls_ressource`` — nicht die Reihenfolge, in der CKAN sie nennt.
+    """
+    paket = await _ckan_get_dataset(sources.JAHRESREIHE.ckan_id)
+    ds = _ckan_result(paket, "package_show")
+    xls = _deutsche_xls_ressource(ds)
     payload = await _fetch_bytes_with_retry(xls["url"])
     daten = sources.parse_jahresreihe(payload)
     daten["resource_url"] = xls["url"]
