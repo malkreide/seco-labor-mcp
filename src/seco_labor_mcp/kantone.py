@@ -62,6 +62,13 @@ class KantonsReihe:
     zweiter_slug: str = ""
     trennzeichen: str = ";"
     felder: tuple[str, ...] = field(default=())
+    # Die Pflichtspalten des **zweiten** Datensatzes, wo es einen gibt. Ohne
+    # dieses Feld wurde der zweite Abruf ungeprueft gelesen: `parse_zg` griff
+    # mit `.get("quote")` zu, und eine umbenannte Spalte lieferte fuer jede
+    # Zeile `None`. Ergebnis war keine Ausnahme, sondern eine Antwort ohne die
+    # Quoten -- also ohne genau die Jugendarbeitslosigkeit, die der `hinweis`
+    # als einzigen Weg zu dieser Zahl ausweist.
+    felder_zweite: tuple[str, ...] = field(default=())
 
     @property
     def portal_url(self) -> str:
@@ -134,7 +141,14 @@ KANTONE: dict[str, KantonsReihe] = {
         zweite_ckan_id="b396e748-14db-4aef-b2ff-66103709739e",
         zweiter_slug="arbeitslosenquote",
         trennzeichen=",",
+        # Der Datensatz fuehrt **zwei** CSV-Ressourcen: die Reihe hier
+        # (`jahr,monat,kennzahl,anzahl`) und eine zweite nach Altersgruppen
+        # (`jahr,monat,altersgruppe,anzahl`), geprueft am 2026-08-29. Sie
+        # unterscheiden sich in genau einer Spalte, und `felder` ist deshalb
+        # nicht nur eine Pruefung, sondern das Merkmal, an dem der Server die
+        # richtige der beiden auswaehlt.
         felder=("jahr", "monat", "kennzahl", "anzahl"),
+        felder_zweite=("jahr", "monat", "kennzahl", "quote"),
     ),
     "ZH": KantonsReihe(
         kanton="ZH",
@@ -177,7 +191,30 @@ def _lies_csv(payload: bytes, trennzeichen: str) -> list[dict[str, str]]:
     return [z for z in csv.DictReader(io.StringIO(text), delimiter=trennzeichen) if any(z.values())]
 
 
-def _pflichtfelder(zeilen: list[dict[str, str]], reihe: KantonsReihe) -> None:
+def spalten(payload: bytes, trennzeichen: str) -> list[str]:
+    """Die Kopfzeile einer CSV-Antwort — auch wenn keine Datenzeile folgt.
+
+    Ueber `fieldnames` und nicht ueber die erste gelesene Zeile: eine Datei mit
+    Kopfzeile und ohne Daten hat keine erste Zeile, ist aber sehr wohl die
+    richtige Datei. Wer beides vermengt, meldet «Spalten fehlen» fuer eine
+    Quelle, die gerade nur nichts zu sagen hat.
+    """
+    text = payload.decode("utf-8-sig", errors="replace")
+    return list(csv.DictReader(io.StringIO(text), delimiter=trennzeichen).fieldnames or [])
+
+
+def fehlende_felder(payload: bytes, trennzeichen: str, felder: tuple[str, ...]) -> list[str]:
+    """Welche erwarteten Spalten diese Antwort nicht fuehrt — leer heisst: passt.
+
+    Der Server waehlt damit unter mehreren CSV-Ressourcen eines Datensatzes
+    aus, statt die erste zu nehmen. Gepinnt ist dafuer nichts Zusaetzliches:
+    geprueft wird dieselbe Spaltenliste, die der Adapter ohnehin braucht.
+    """
+    vorhanden = set(spalten(payload, trennzeichen))
+    return [f for f in felder if f not in vorhanden]
+
+
+def _pflichtspalten(zeilen: list[dict[str, str]], felder: tuple[str, ...], was: str) -> None:
     """Meldet ein geaendertes Schema, statt eine leere Reihe zu liefern.
 
     Ohne diese Pruefung liefe ein umbenanntes Feld auf `.get()` ins Leere und
@@ -185,13 +222,18 @@ def _pflichtfelder(zeilen: list[dict[str, str]], reihe: KantonsReihe) -> None:
     «dieser Monat hat keine Daten».
     """
     if not zeilen:
-        raise KantonsReiheNichtLesbarError(f"{reihe.kanton}: die Antwort enthaelt keine Zeilen")
+        raise KantonsReiheNichtLesbarError(f"{was}: die Antwort enthaelt keine Zeilen")
     vorhanden = set(zeilen[0])
-    fehlend = [f for f in reihe.felder if f not in vorhanden]
+    fehlend = [f for f in felder if f not in vorhanden]
     if fehlend:
         raise KantonsReiheNichtLesbarError(
-            f"{reihe.kanton}: Spalten fehlen: {fehlend}. Vorhanden: {sorted(vorhanden)}"
+            f"{was}: Spalten fehlen: {fehlend}. Vorhanden: {sorted(vorhanden)}"
         )
+
+
+def _pflichtfelder(zeilen: list[dict[str, str]], reihe: KantonsReihe) -> None:
+    """Die Pflichtspalten der Hauptreihe eines Kantons."""
+    _pflichtspalten(zeilen, reihe.felder, reihe.kanton)
 
 
 def _zahl(wert: str) -> float | None:
@@ -272,7 +314,14 @@ def parse_zg(payload: bytes, reihe: KantonsReihe, quoten: bytes | None = None) -
         if periode and wert is not None:
             punkte.setdefault(periode, {})[z.get("kennzahl", "")] = wert
     if quoten:
-        for z in _lies_csv(quoten, reihe.trennzeichen):
+        quotenzeilen = _lies_csv(quoten, reihe.trennzeichen)
+        # Bis zum 2026-08-29 stand hier keine Pruefung. Eine umbenannte
+        # `quote`-Spalte lieferte dann fuer jede Zeile `None`, keine Ausnahme
+        # und eine Antwort ohne beide Quoten -- die Anzahlen aus der ersten
+        # Datei standen ja noch da. Still unvollstaendig ist schlimmer als laut
+        # kaputt, und die Jugendarbeitslosigkeit gibt es hier nur als Quote.
+        _pflichtspalten(quotenzeilen, reihe.felder_zweite, f"{reihe.kanton} (Quoten)")
+        for z in quotenzeilen:
             periode = periode_von(z)
             wert = _zahl(z.get("quote", ""))
             if periode and wert is not None:

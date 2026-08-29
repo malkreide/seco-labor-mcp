@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Behoben
 
+- **Zug las den zweiten Datensatz ungeprüft — und hätte die
+  Jugendarbeitslosigkeit still verloren.** Die Anzahlen stehen in
+  `arbeitsmarktstatistik`, die Quoten in `arbeitslosenquote`. Für die erste
+  Datei prüfte `parse_zg` die Pflichtspalten, für die zweite nicht: sie wurde
+  mit `.get("quote")` gelesen. Eine umbenannte Spalte liefert damit für jede
+  Zeile `None` — keine Ausnahme, keine leere Antwort, sondern eine Antwort
+  ohne beide Quoten, weil die Anzahlen aus der ersten Datei ja noch dastehen.
+  Verloren wäre genau die **Jugendarbeitslosenquote**, die der `hinweis` des
+  Kantons als einzigen Weg zu dieser Zahl ausweist. Nachgestellt an der
+  Aufzeichnung vom 2026-08-15: `Arbeitslosenquote` und
+  `Jugendarbeitslosenquote` verschwinden, alles andere bleibt grün.
+
+  `KantonsReihe` führt jetzt `felder_zweite`, und der zweite Datensatz läuft
+  durch dieselbe Prüfung wie der erste. Der neue Live-Test hält die im
+  Register deklarierten Kennzahlen gegen die jüngste Periode, statt nur
+  «irgendwelche Datenpunkte» zu zählen.
+
+- **Die kantonale CSV wurde nach Position gewählt, nicht nach Inhalt.**
+  Derselbe Griff wie bei der französischen BFS-Mappe, eine Ebene tiefer:
+  `_erste_csv_url` nahm die erste CSV-Ressource des Pakets. Zugs
+  `arbeitsmarktstatistik` führt aber **zwei** — die Reihe
+  (`jahr,monat,kennzahl,anzahl`) und eine nach Altersgruppen
+  (`jahr,monat,altersgruppe,anzahl`), geprüft am 2026-08-29. Sie unterscheiden
+  sich in genau einer Spalte; nennt CKAN die falsche zuerst, fällt der Adapter
+  mit `Spalten fehlen: ['kennzahl']`. Laut immerhin — aber rot ohne Ursache im
+  Diff, und das ist die Nacht, die niemand einordnen kann.
+
+  Anders als beim BFS hilft hier keine Sprachwahl: beide Ressourcen führen
+  `language: []`. Gewählt wird deshalb an den Spalten, die der Adapter ohnehin
+  braucht — `_csv_mit_den_erwarteten_spalten` prüft die Kandidaten in der
+  Reihenfolge, in der CKAN sie nennt, und hört beim ersten Treffer auf. Steht
+  die richtige vorn, kostet das genau einen Abruf wie zuvor; ein Test hält das
+  fest. Gepinnt ist dafür nichts Zusätzliches: kein Titel, keine
+  Ressourcen-Nummer, nur `felder`, das es schon gab.
+
+  Beobachtet ist der Positionswechsel bei Zug **nicht** — belegt ist er für
+  die BFS-Tabelle im selben Portal. Die Annahme fällt trotzdem, weil sie
+  nirgends zugesichert ist und der Fehlerfall dieselbe Nacht kostet.
+
+  `scripts/record_fixtures.py` trug denselben Griff und hätte an einem solchen
+  Tag eine andere Datei aufgezeichnet, als der Server liest. Eine Fixture, die
+  etwas anderes belegt als den Produktivpfad, belegt nichts — der Recorder
+  wählt jetzt gleich.
+
+### Behoben
+
 - **Die Live-Suite las an manchen Tagen die französische Arbeitsmappe.** Der
   gepinnte BFS-Datensatz führt dieselbe Tabelle zweimal — `je-d-03.03.00.01`
   und `je-f-03.03.00.01`. Beide tragen Format `XLS`, beide das Blatt

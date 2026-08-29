@@ -105,6 +105,31 @@ def holen(url: str, **params: Any) -> httpx.Response:
     raise RuntimeError(f"{url} nach drei Versuchen nicht erreichbar") from letzter
 
 
+def _csv_mit_den_erwarteten_spalten(
+    paket: dict[str, Any], felder: tuple[str, ...], reihe: kantone.KantonsReihe
+) -> tuple[dict[str, Any], bytes]:
+    """Dieselbe Auswahl wie im Server — sonst zeichnet der Recorder etwas anderes auf.
+
+    Zug fuehrt zwei CSV-Ressourcen, und `next(... CSV ...)` nahm die, die CKAN
+    gerade zuerst nannte. Bliebe das hier stehen, waere die Aufzeichnung an dem
+    Tag eine andere Datei als die, die der Server liest -- und eine Fixture,
+    die etwas anderes belegt als den Produktivpfad, belegt nichts.
+    """
+    befunde = []
+    for r in paket["result"]["resources"]:
+        if (r.get("format") or "").upper() != "CSV" or not r.get("url"):
+            continue
+        roh = holen(r["url"]).content
+        fehlend = kantone.fehlende_felder(roh, reihe.trennzeichen, felder)
+        if not fehlend:
+            return r, roh
+        befunde.append(f"{r['url']} — es fehlen {fehlend}")
+    raise SystemExit(
+        f"{reihe.kanton}: keine CSV-Ressource mit den Spalten {list(felder)}. "
+        "Geprueft: " + ("; ".join(befunde) or "keine CSV-Ressource im Paket")
+    )
+
+
 def _kuerze_kantonscsv(roh: bytes, reihe: kantone.KantonsReihe) -> tuple[str, int, int]:
     """Kuerzt eine kantonale CSV auf die juengsten Perioden, Spalten unveraendert.
 
@@ -243,10 +268,7 @@ def main() -> int:
     for kuerzel in sorted(kantone.KANTONE):
         reihe = kantone.KANTONE[kuerzel]
         paket = holen(f"{CKAN_BASE}/package_show", id=reihe.ckan_id).json()
-        ressource = next(
-            r for r in paket["result"]["resources"] if (r.get("format") or "").upper() == "CSV"
-        )
-        roh = holen(ressource["url"]).content
+        ressource, roh = _csv_mit_den_erwarteten_spalten(paket, reihe.felder, reihe)
         text, zeilen_gesamt, gewaehlt = _kuerze_kantonscsv(roh, reihe)
         write(
             f"kanton_{kuerzel.lower()}.csv",
@@ -259,10 +281,7 @@ def main() -> int:
         )
         if reihe.zweite_ckan_id:
             paket2 = holen(f"{CKAN_BASE}/package_show", id=reihe.zweite_ckan_id).json()
-            res2 = next(
-                r for r in paket2["result"]["resources"] if (r.get("format") or "").upper() == "CSV"
-            )
-            roh2 = holen(res2["url"]).content
+            res2, roh2 = _csv_mit_den_erwarteten_spalten(paket2, reihe.felder_zweite, reihe)
             text2, gesamt2, gewaehlt2 = _kuerze_kantonscsv(roh2, reihe)
             write(
                 f"kanton_{kuerzel.lower()}_quoten.csv",

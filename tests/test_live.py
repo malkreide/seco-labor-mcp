@@ -111,6 +111,26 @@ class TestLiveAPI:
             assert inhalt, f"{kuerzel}: keine Datenpunkte"
 
     @pytest.mark.asyncio
+    async def test_zug_liefert_die_quoten_und_nicht_nur_die_anzahlen(self):
+        """Zug liest aus zwei Datensätzen, und einer davon kann still ausfallen.
+
+        Die Anzahlen stehen in `arbeitsmarktstatistik`, die Quoten in
+        `arbeitslosenquote`. Fällt der zweite Abruf aus oder benennt die Quelle
+        dort eine Spalte um, bleibt die Antwort nicht leer — die Anzahlen sind
+        ja da. Verloren geht nur die **Jugendarbeitslosenquote**, und die gibt
+        es bei Zug auf keinem anderen Weg; `hinweis` sagt das ausdrücklich.
+
+        Geprüft werden deshalb die im Register deklarierten Kennzahlen, nicht
+        bloss «irgendwelche Datenpunkte». Am 2026-08-29 trug jede der letzten
+        zwölf Perioden alle drei.
+        """
+        daten = await _kantonsreihe("ZG")
+        juengste = sorted(daten["nach_periode"])[-1]
+        vorhanden = daten["nach_periode"][juengste]
+        fehlend = [k for k in kantone.KANTONE["ZG"].kennzahlen if k not in vorhanden]
+        assert not fehlend, f"{juengste}: {fehlend} fehlen — zweiter Datensatz ausgefallen?"
+
+    @pytest.mark.asyncio
     async def test_die_jahresreihe_stimmt_noch_mit_der_quelle_ueberein(self):
         """Beschriftungen, Jahre und der Abstand der Reihen — in einem Abruf.
 

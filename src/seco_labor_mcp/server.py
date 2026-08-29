@@ -565,25 +565,59 @@ async def _fetch_bytes_with_retry(url: str) -> bytes:
     ) from last_error
 
 
-async def _erste_csv_url(ckan_id: str, slug: str) -> tuple[str, str]:
-    """Die aktuelle CSV-Ressource eines gepinnten Datensatzes und sein Änderungsdatum.
+async def _csv_mit_den_erwarteten_spalten(
+    ckan_id: str, slug: str, felder: tuple[str, ...], trennzeichen: str
+) -> tuple[str, bytes, str]:
+    """Die CSV-Ressource, die die erwarteten Spalten führt — nicht die erstbeste.
 
     Wie beim nationalen Weg wird nur die **Kennung** gepinnt, nie die
     Ressourcen-URL: die Kantone hängen ihre Dateien an Portal-URLs, die einen
     Portalumzug nicht überleben. Die CKAN-Kennung überlebt ihn.
+
+    Bis zum 2026-08-29 nahm diese Funktion die erste CSV-Ressource des Pakets.
+    Das setzt voraus, dass CKAN seine Ressourcen in einer verlässlichen
+    Reihenfolge nennt, und das tut es nicht — für die gepinnte BFS-Tabelle
+    stand die Reihenfolge in zwei Nächten anders und liess die Live-Suite
+    fallen. Zug ist derselbe Fall: `arbeitsmarktstatistik` führt neben der
+    Reihe (`jahr,monat,kennzahl,anzahl`) eine zweite CSV nach Altersgruppen
+    (`jahr,monat,altersgruppe,anzahl`), geprüft am 2026-08-29.
+
+    Ausgewählt wird deshalb an den Spalten, die der Adapter ohnehin braucht.
+    Das pinnt nichts Zusätzliches — kein Titel, keine Ressourcen-Nummer, nichts
+    was neben `felder` noch nachgeführt werden müsste. Die Kandidaten werden in
+    der Reihenfolge geprüft, in der CKAN sie nennt, und beim ersten Treffer
+    hört es auf: steht die richtige vorn, kostet das genau einen Abruf wie
+    zuvor. Passen mehrere, gibt es nichts zu unterscheiden und es bleibt bei
+    der ersten.
+
+    Liefert die Nutzlast gleich mit: sie ist beim Prüfen bereits geholt, und
+    ein zweiter Abruf derselben Datei wäre nur eine weitere Gelegenheit für
+    einen Aussetzer.
     """
     paket = await _ckan_get_dataset(ckan_id)
     ds = _ckan_result(paket, "package_show")
-    treffer = next(
-        (r for r in ds.get("resources", []) if (r.get("format") or "").upper() == "CSV"),
-        None,
-    )
-    if treffer is None or not treffer.get("url"):
+    geaendert = (ds.get("metadata_modified") or "")[:10]
+    kandidaten = [
+        r
+        for r in ds.get("resources", [])
+        if (r.get("format") or "").upper() == "CSV" and r.get("url")
+    ]
+    if not kandidaten:
         raise UpstreamSchemaError(
             f"Datensatz {slug!r} führt keine CSV-Ressource mehr. Vorhandene Formate: "
             f"{sorted({r.get('format') for r in ds.get('resources', [])})}"
         )
-    return treffer["url"], (ds.get("metadata_modified") or "")[:10]
+    befunde: list[str] = []
+    for ressource in kandidaten:
+        payload = await _fetch_bytes_with_retry(ressource["url"])
+        fehlend = kantone.fehlende_felder(payload, trennzeichen, felder)
+        if not fehlend:
+            return ressource["url"], payload, geaendert
+        befunde.append(f"{ressource['url']} — es fehlen {fehlend}")
+    raise UpstreamSchemaError(
+        f"Datensatz {slug!r}: keine der {len(kandidaten)} CSV-Ressourcen führt die "
+        f"erwarteten Spalten {list(felder)}. Geprüft: " + "; ".join(befunde)
+    )
 
 
 async def _kantonsreihe(kanton: str) -> dict[str, Any]:
@@ -595,11 +629,14 @@ async def _kantonsreihe(kanton: str) -> dict[str, Any]:
     Fehler.
     """
     reihe = kantone.KANTONE[kanton]
-    url, geaendert = await _erste_csv_url(reihe.ckan_id, reihe.slug)
-    payload = await _fetch_bytes_with_retry(url)
+    url, payload, geaendert = await _csv_mit_den_erwarteten_spalten(
+        reihe.ckan_id, reihe.slug, reihe.felder, reihe.trennzeichen
+    )
     if kanton == "ZG":
-        quoten_url, _ = await _erste_csv_url(reihe.zweite_ckan_id, reihe.zweiter_slug)
-        daten = kantone.parse_zg(payload, reihe, await _fetch_bytes_with_retry(quoten_url))
+        _, quoten, _ = await _csv_mit_den_erwarteten_spalten(
+            reihe.zweite_ckan_id, reihe.zweiter_slug, reihe.felder_zweite, reihe.trennzeichen
+        )
+        daten = kantone.parse_zg(payload, reihe, quoten)
     else:
         daten = kantone.PARSER[kanton](payload, reihe)
     daten["resource_url"] = url
