@@ -66,7 +66,7 @@ dev = [
     # landen. Ein Range wird ohne Codeaenderung rot.
     #
     # Vorher stand hier `>=0.5.0,<0.17`. Der Cap allein genuegt nicht: die CI
-    # faehrt `ruff==0.16.4`, ein `pip install -e ".[dev]"` erfuellt die Spanne
+    # faehrt `ruff==0.16.5`, ein `pip install -e ".[dev]"` erfuellt die Spanne
     # aber mit einer beliebigen Version darin. Lokal gruen und in der CI rot
     # war damit moeglich, ohne dass jemand etwas verursacht hat.
     #
@@ -80,7 +80,7 @@ dev = [
     # Vor dem Lauf `ruff --version` pruefen: ein aelteres ruff frueher im
     # `PATH` schlaegt den Pin, ohne dass der Install etwas meldet.
     # `scripts/check_ruff_pin.py` prueft genau das.
-    "ruff==0.16.4",
+    "ruff==0.16.5",
 ]
 
 [project.scripts]
