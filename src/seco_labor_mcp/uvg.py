@@ -152,14 +152,26 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
     """
     # Lokale Importe: server.py importiert dieses Modul, deshalb dürfen wir
     # server.py nicht auf Modulebene importieren. Zur Aufrufzeit ist es geladen.
-    from .server import _client_scope, _validate_external_url
+    from .server import DnsResolutionError, _client_scope, _validate_external_url
 
     now = datetime.now(UTC)
     cached = _UVG_CACHE.get(url)
     if cached and now - cached[0] < UVG_CACHE_TTL:
         return cached[1], cached[2], "cached"
 
-    await _validate_external_url(url)
+    # Die Validierung liegt vor der Retry-Schleife, also ausserhalb ihrer
+    # Fehlerbehandlung. Ein DNS-Ausfall flog deshalb als `ValueError` an jedem
+    # `except UvgSourceUnavailableError` der Aufrufenden vorbei: kein
+    # Ausfall-Envelope, im Live-Lauf ein `error` statt eines Skips, und damit
+    # wieder das falsche Upstream-Issue. Hier wird er in denselben Ausfall
+    # uebersetzt wie ein ConnectError — er ist ja derselbe, nur eine Schicht
+    # frueher. Die uebrigen Ablehnungen (privates Ziel, falsches Schema) bleiben
+    # unberuehrt und schlagen weiter durch: Sie sind eine Entscheidung dieses
+    # Servers und kein Ausfall der Quelle.
+    try:
+        await _validate_external_url(url)
+    except DnsResolutionError as exc:
+        raise UvgSourceUnavailableError(str(exc), quelle_antwortete=False) from exc
 
     last_error: Exception | None = None
     deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET

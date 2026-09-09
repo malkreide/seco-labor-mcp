@@ -296,12 +296,61 @@ alles andere; wer nur eine nimmt, übersieht den Rest. Genau so ist die
 Limit-Meldung zuerst durchgerutscht.
 
 Der Kommentarzähler allein reicht ohnehin nicht: `comments: 1` kann die
-Befundlos-, die Kontingent- **oder** die Environment-Meldung sein — drei
-gegensätzliche Bedeutungen unter derselben Zahl. Den Text lesen, nicht die Zahl.
-Und einen unbekannten vierten Text wörtlich zitieren, statt ihn in eine der
-bekannten Schubladen zu zwingen: Dieser Abschnitt musste schon einmal von drei
-auf vier Gründe wachsen, und die 👍-Reaktion stand hier zwei Fassungen lang als
-Tatsache.
+Befundlos-, die Kontingent-, die Environment-Meldung **oder** die Statustabelle
+von unten sein — vier gegensätzliche Bedeutungen unter derselben Zahl. Den Text
+lesen, nicht die Zahl. Und einen unbekannten fünften Text wörtlich zitieren,
+statt ihn in eine der bekannten Schubladen zu zwingen: Dieser Abschnitt musste
+schon zweimal wachsen — von drei auf vier Gründe, dann um die Statustabelle —
+und die 👍-Reaktion stand hier zwei Fassungen lang als Tatsache.
+
+**Die Statustabelle sagt nichts über Befunde.** Seit dem 9.9.2026 belegt: Codex
+setzt beim Anlaufen einen eigenen Kommentar, erkennbar am Marker
+`<!-- codex-pull-request-review-summary -->` und der Überschrift
+`## Codex Review Summary`, mit einer Tabelle
+*Review | Status | Commit | Review trigger*.
+
+Er wird **in place aktualisiert**. Das ist gemessen, nicht geschlossen: Auf
+PR #73 trug derselbe Kommentar (ID 5595521498) um 03:53:11 UTC
+
+```
+| 📝 Code Review | 🔄 Running since 2026-09-09T03:53:09 | c5e9544 | Draft marked ready |
+```
+
+und um 03:56:22 UTC
+
+```
+| 📝 Code Review | ✅ Completed 2026-09-09T03:56:21 | c5e9544 | Draft marked ready |
+```
+
+— `created_at` blieb 03:53:11, nur `updated_at` sprang. Wer einmal abfragt,
+sieht einen Zustand und weiss nicht, welchen.
+
+**«Completed» ist keine Entwarnung.** Die Tabelle sagt, dass ein Lauf
+stattgefunden hat, und kein Wort darüber, ob er etwas gefunden hat. Auf
+demselben PR lag zur selben Minute ein Review-Objekt mit einem P2-Befund — wer
+das grüne Häkchen der Tabelle für das Ergebnis genommen hätte, hätte ihn
+übersehen. Für Befunde bleibt es bei `get_reviews`, und die Befunde selbst
+stehen noch eine Ebene tiefer: `get_review_comments`. Der Body des
+Review-Objekts trägt nur «Here are some automated review suggestions», nicht
+die Suggestions.
+
+Nützlich ist die Tabelle trotzdem, und zwar wegen der letzten Spalte: Sie nennt
+den Auslöser («Draft marked ready») und den Startzeitpunkt. Damit lässt sich
+das Fenster ablesen, das der Absatz weiter unten beschreibt.
+
+Nebenbei stützt sie «Der Kasten ist keine Quelle»: Die beiden Infokästen
+desselben PR widersprachen einander zur selben Zeit. Unter der Statustabelle
+stand «Codex reacts with 👀 while any review is running, … and reacts with 👍
+once all reviews finish with no findings» und als Auslöser auch
+«@codex security review»; unter dem Review-Objekt stand «If Codex has
+suggestions, it will comment; otherwise it will react with 👍» und nur
+«@codex review». Zwei Fassungen, ein PR.
+
+Was hier **nicht** gemessen ist: ob die 👀-Reaktion je da war. Auf Kommentar
+wie PR standen alle Reaktionszähler auf 0, aber abgefragt wurde erst nach
+Abschluss des Laufs — eine Reaktion, die nur während der Laufzeit steht, wäre
+da längst wieder weg gewesen. Aus diesem Nullwert also nichts über 👀
+schliessen; die Beobachtung vom 23.8. betraf 👍 und steht für sich.
 
 Und ein befundloser Lauf ist kein Freispruch. Am 23.8. lief derselbe Text durch
 42 Reviews: 36 meldeten denselben P2-Befund, 6 die Befundlos-Meldung — gleiche
@@ -323,6 +372,38 @@ mergen. Am 21./22.8. lagen zwischen «ready for review» und Merge mehrfach drei
 bis fünf Sekunden. Codex wird beim Umschalten von Draft auf ready ausgelöst und
 braucht danach Zeit; wer sofort mergt, hat das Häkchen gesetzt und den Review
 nicht abgewartet.
+
+Am 9.9.2026 ist erstmals belegt, was dabei verloren geht. PR #73, alle Zeiten
+UTC:
+
+```
+03:53:05  ready for review
+03:53:09  Codex startet (Auslöser laut Tabelle: «Draft marked ready»)
+03:53:11  Statuskommentar erscheint, Status «Running»
+03:54:34  Merge
+03:56:18  Review-Objekt eingereicht — mit einem P2-Befund
+03:56:21  Statuskommentar wechselt auf «Completed»
+```
+
+86 Sekunden zwischen ready und Merge, und der Review kam **1 min 44 s nach dem
+Merge**. Er war kein Formfehler: Der Befund war echt, reproduzierbar und traf
+genau die Lücke, die der gemergte PR schliessen sollte — ein DNS-Ausfall flog
+an der neuen Ausfall-Erkennung vorbei und hätte weiter das falsche
+Upstream-Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
+den geschlossenen PR wäre er in `main` liegengeblieben.
+
+Bei den Drei-bis-fünf-Sekunden-Fällen vom 21./22.8. ist unbekannt, ob es dort
+etwas zu finden gab. Hier ist es bekannt.
+
+Was der Fall **nicht** hergibt, ist eine Wartezeit. Drei Minuten und acht
+Sekunden vom Start bis zum eingereichten Review sind eine Beobachtung, keine
+Messreihe; wer daraus «vier Minuten warten, dann ist es sicher» macht, hat sich
+eine Regel aus einem Datenpunkt gebaut. Belastbar ist nur die Form: Nicht auf
+die Uhr sehen, sondern auf den Status — und der steht in der Tabelle, deren
+Auslöserspalte gerade dieses Fenster sichtbar macht.
+
+Und ein geschlossener PR ist kein Grund, nicht mehr hinzusehen: Der Review
+läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
 
 Das Kontingent hängt am Konto, nicht am Repo, und Code-Reviews haben einen
 eigenen Topf — nur GitHub-getriggerte Reviews zählen hinein. ChatGPT-Pläne
