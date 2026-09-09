@@ -324,6 +324,26 @@ class UrlNotAllowedError(ValueError):
     """Raised by _validate_external_url for unsafe schemes or IP targets."""
 
 
+class DnsResolutionError(UrlNotAllowedError):
+    """Der Name liess sich nicht aufloesen — die Quelle hat nicht geantwortet.
+
+    Unterklasse, damit jede bestehende Behandlung von `UrlNotAllowedError`
+    unveraendert greift; getrennt, weil dieser Fall etwas anderes bedeutet als
+    die uebrigen. Eine private IP oder ein falsches Schema ist eine
+    *Ablehnung*: Die Politik dieses Servers verweigert den Abruf, und das
+    gehoert gemeldet. Ein DNS-Fehlschlag ist ein *Ausfall* — dieselbe Klasse
+    wie ein ConnectError, nur eine Schicht frueher, und ueber den Vertrag mit
+    der Quelle ist damit nichts festgestellt.
+
+    Ohne diese Trennung fiel der Unterschied unter den Tisch: `uvg.py` fing
+    `UvgSourceUnavailableError`, ein DNS-Ausfall flog als `ValueError` daran
+    vorbei, und aus dem Live-Lauf wurde ein `error` statt eines Skips — also
+    genau das falsche Upstream-Issue, das der Umbau vom 9.9.2026 verhindern
+    soll. Gefunden von einem Codex-Review auf PR #73, nachgeprueft und
+    reproduziert.
+    """
+
+
 async def _validate_external_url(url: str) -> None:
     """SEC-004: Reject URLs that are not HTTPS or that resolve to a
     private/loopback/link-local/multicast IP. Resolution happens here
@@ -342,7 +362,7 @@ async def _validate_external_url(url: str) -> None:
     try:
         infos = await loop.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise UrlNotAllowedError(f"DNS resolution failed for {host!r}: {exc}") from exc
+        raise DnsResolutionError(f"DNS resolution failed for {host!r}: {exc}") from exc
     for _family, _type, _proto, _canon, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
         if (

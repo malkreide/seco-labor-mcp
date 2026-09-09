@@ -12,12 +12,17 @@ bildet ab, was beim Schreiben erwartet wurde. Dafür gibt es die Live-Tests in
 ``test_live.py`` — insbesondere die Summenprobe gegen das gedruckte Total.
 """
 
+import asyncio
+import socket
+from unittest.mock import patch
+
 import httpx
 import pytest
 import respx
 
 from seco_labor_mcp import server, uvg
 from seco_labor_mcp.server import (
+    UrlNotAllowedError,
     UvgBranchInput,
     UvgOverviewInput,
     UvgTrendInput,
@@ -560,6 +565,62 @@ class TestOverviewTool:
         note = (await uvg.uvg_overview_impl())["note"]
         assert "erneut versuchen" not in note
         assert "hat geantwortet" in note
+
+    # -- DNS-Ausfall: derselbe Ausfall, eine Schicht frueher ----------------
+    #
+    # Codex-Befund (P2) auf PR #73, nachgeprueft und reproduziert: Die
+    # SSRF-Validierung laeuft VOR der Retry-Schleife und wirft bei
+    # DNS-Fehlschlag einen `ValueError`. Der flog an jedem
+    # `except UvgSourceUnavailableError` vorbei — kein Ausfall-Envelope, im
+    # Live-Lauf ein `error` statt eines Skips, und damit genau das falsche
+    # Upstream-Issue, das dieser Umbau verhindern soll. Die stummste aller
+    # Quellen fiel durch die Luecke.
+
+    @pytest.mark.asyncio
+    async def test_dns_ausfall_ist_eine_stumme_quelle(self):
+        async def kein_dns(*_a, **_k):
+            raise socket.gaierror(-2, "Name or service not known")
+
+        loop = asyncio.get_running_loop()
+        with patch.object(type(loop), "getaddrinfo", kein_dns):
+            envelope = await uvg.uvg_overview_impl()
+        assert envelope["degraded"] is True
+        assert envelope["degraded_kind"] == uvg.STUMM
+
+    @pytest.mark.asyncio
+    async def test_dns_ausfall_in_allen_drei_werkzeugen(self):
+        """Alle drei Implementationen, weil alle drei denselben Pfad nehmen."""
+
+        async def kein_dns(*_a, **_k):
+            raise socket.gaierror(-2, "Name or service not known")
+
+        loop = asyncio.get_running_loop()
+        with patch.object(type(loop), "getaddrinfo", kein_dns):
+            envelopes = [
+                await uvg.uvg_overview_impl(),
+                await uvg.uvg_by_branch_impl(),
+                await uvg.uvg_trends_impl(noga="43"),
+            ]
+        for envelope in envelopes:
+            assert envelope["degraded_kind"] == uvg.STUMM, envelope.get("note")
+
+    @pytest.mark.asyncio
+    async def test_ssrf_ablehnung_wird_kein_ausfall(self):
+        """Die Gegenrichtung, und sie ist die wichtigere.
+
+        Ein privates Ziel abzulehnen ist eine Entscheidung dieses Servers, kein
+        Ausfall der Quelle. Wuerde sie zu `degraded` umgedeutet, uebersprungen
+        die Live-Tests sie stillschweigend — und eine kaputte oder entfuehrte
+        SSRF-Politik faellt niemandem mehr auf.
+        """
+
+        async def privates_ziel(*_a, **_k):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+
+        loop = asyncio.get_running_loop()
+        with patch.object(type(loop), "getaddrinfo", privates_ziel):
+            with pytest.raises(UrlNotAllowedError):
+                await uvg.uvg_overview_impl()
 
     @respx.mock
     @pytest.mark.asyncio
