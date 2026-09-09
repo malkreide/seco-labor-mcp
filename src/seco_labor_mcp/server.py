@@ -38,7 +38,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__, kantone, retry_policy, sources
-from .uvg import uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
+from .uvg import STUMM, uvg_by_branch_impl, uvg_overview_impl, uvg_trends_impl
 
 # ---------------------------------------------------------------------------
 # HTTP client lifecycle (SDK-001: pooled client via FastMCP lifespan)
@@ -2181,7 +2181,15 @@ def _uvg_markdown(envelope: dict[str, Any], title: str, body: list[str]) -> str:
     """
     lines = [f"## {title}\n"]
     if envelope.get("degraded"):
-        lines.append(f"> **Quelle nicht erreichbar.** {envelope.get('note', '')}\n")
+        # Die Ueberschrift traegt die Einordnung mit: «nicht erreichbar» ueber
+        # einer Absage, die die Quelle sehr wohl gegeben hat, laedt das Modell
+        # zum Wiederholen ein — und der naechste Versuch liest dieselbe Absage.
+        kopf = (
+            "Quelle nicht erreichbar"
+            if envelope.get("degraded_kind", STUMM) == STUMM
+            else "Quelle geantwortet, Antwort nicht lesbar"
+        )
+        lines.append(f"> **{kopf}.** {envelope.get('note', '')}\n")
         return "\n".join(lines)
     if envelope.get("hint"):
         lines.append(f"> **Kein Treffer.** {envelope['hint']}\n")

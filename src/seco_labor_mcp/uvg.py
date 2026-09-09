@@ -106,7 +106,27 @@ _UVG_CACHE: OrderedDict[str, tuple[datetime, bytes, str | None]] = OrderedDict()
 
 
 class UvgSourceUnavailableError(RuntimeError):
-    """Quelle nach allen Retries nicht erreichbar und kein Cache vorhanden."""
+    """Abruf gescheitert und kein Cache vorhanden.
+
+    ``quelle_antwortete`` trennt die beiden Fälle, die hier zusammenlaufen und
+    gegensätzlich zu behandeln sind:
+
+    ``False``  Es kam keine Antwort — ConnectError, Timeout, aufgebrauchtes
+               Budget. Über den Vertrag mit der Quelle ist damit nichts
+               festgestellt; wer daraus einen Befund macht, misst die Störung.
+    ``True``   Die Quelle hat geantwortet und die Auskunft verweigert (4xx).
+               Das ist eine belastbare Antwort und gehört angesehen: Ein 404
+               auf einer erwarteten URL heisst, dass die Adresse sich bewegt
+               hat — genau der Ausfall, den die Live-Suite fangen soll.
+
+    Ein 5xx und ein 429 zählen als ``False``: Die Gegenstelle hat zwar
+    geantwortet, aber über ihren Inhalt nichts gesagt. Sie sind Störung, nicht
+    Auskunft.
+    """
+
+    def __init__(self, *args: object, quelle_antwortete: bool = False) -> None:
+        super().__init__(*args)
+        self.quelle_antwortete = quelle_antwortete
 
 
 def _cache_put(url: str, payload: bytes, last_modified: str | None) -> None:
@@ -206,9 +226,19 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
         else f"Budget von {retry_policy.RETRY_TOTAL_BUDGET:g}s nach {attempts} aufgebraucht"
     )
     detail = str(last_error) or "keine weitere Angabe"
+    # Hat die Quelle geantwortet? Nur ein 4xx ausser 429 ist eine Auskunft; ein
+    # 5xx, ein 429 und jeder Transportfehler sind Störung. Die Schleife oben
+    # bricht bei genau diesen 4xx ab, statt sie zu wiederholen — hier wird
+    # dieselbe Grenze noch einmal gezogen, damit sie im Fehler ankommt.
+    antwortete = (
+        isinstance(last_error, httpx.HTTPStatusError)
+        and 400 <= last_error.response.status_code < 500
+        and last_error.response.status_code != 429
+    )
     raise UvgSourceUnavailableError(
         f"{url} nach {attempts} Versuch(en) — {grund}: "
-        f"{type(last_error).__name__}: {detail} (host={host})"
+        f"{type(last_error).__name__}: {detail} (host={host})",
+        quelle_antwortete=antwortete,
     ) from last_error
 
 
@@ -459,8 +489,13 @@ async def resolve_latest_edition(max_probe: int = 3) -> tuple[int, bytes, str | 
         except UvgSourceUnavailableError as exc:
             last_error = exc
             continue
+    # `last_error is None` heisst: Jeder Kandidat kam als 404 zurück, die Quelle
+    # hat also auf jede Adresse geantwortet. Dass keine Ausgabe darunter war,
+    # ist dann ein Befund — die Nummerierung hat sich bewegt — und keine
+    # Störung. Lag ein echter Ausfall an, trägt er seine eigene Einordnung.
     raise UvgSourceUnavailableError(
-        f"Keine Jahresausgabe in Ts{current_yy - max_probe:02d}..Ts{current_yy:02d} gefunden: {last_error}"
+        f"Keine Jahresausgabe in Ts{current_yy - max_probe:02d}..Ts{current_yy:02d} gefunden: {last_error}",
+        quelle_antwortete=last_error is None or last_error.quelle_antwortete,
     )
 
 
@@ -873,15 +908,39 @@ def build_envelope(
     return envelope
 
 
-def _degraded_envelope(reason: str) -> dict[str, Any]:
-    return build_envelope(
-        provenance="unavailable",
-        degraded=True,
-        note=(
+# Werte von ``degraded_kind``. Ein Envelope mit ``degraded: True`` sagt für
+# sich genommen nur, dass keine Daten kommen — nicht, ob darüber etwas
+# festgestellt wurde. Diese beiden Werte tragen genau das:
+STUMM = "unreachable"  # Keine Antwort. Über den Vertrag ist nichts bekannt.
+UNLESBAR = "unreadable"  # Antwort da, Inhalt trug nicht. Das ist ein Befund.
+
+
+def _degraded_envelope(reason: str, *, kind: str = STUMM) -> dict[str, Any]:
+    """Ausfall-Envelope — ``kind`` sagt, ob die Quelle geantwortet hat.
+
+    Die Meldung richtet sich danach, und zwar nicht bloss im Ton: Einer
+    deterministischen Absage einen Wiederholungsrat mitzugeben, ist falsch. Wer
+    «in einigen Minuten erneut versuchen» liest, wo das Layout gebrochen ist,
+    versucht es in einigen Minuten erneut — und liest dieselbe Absage.
+    """
+    if kind == STUMM:
+        note = (
             "unfallstatistik.ch war nach drei Versuchen (2s/4s/8s) nicht erreichbar und es "
             f"liegt kein Cache vor. Ursache: {reason}. In einigen Minuten erneut versuchen; "
             "die Publikationen sind unter unfallstatistik.ch auch direkt abrufbar."
-        ),
+        )
+    else:
+        note = (
+            "unfallstatistik.ch hat geantwortet, die Antwort war aber nicht wie erwartet "
+            f"lesbar. Ursache: {reason}. Ein erneuter Versuch ändert daran nichts — die "
+            "Quelle hat vermutlich ihr Layout oder ihre Adressen geändert. Die "
+            "Publikationen sind unter unfallstatistik.ch direkt abrufbar."
+        )
+    return build_envelope(
+        provenance="unavailable",
+        degraded=True,
+        degraded_kind=kind,
+        note=note,
     )
 
 
@@ -948,11 +1007,13 @@ async def uvg_overview_impl(years: int = 5, include_nbuv: bool = False) -> dict[
     try:
         payload, last_modified, provenance = await _fetch_bytes(UVG_KEY_FIGURES_URL)
     except UvgSourceUnavailableError as exc:
-        return _degraded_envelope(str(exc))
+        return _degraded_envelope(str(exc), kind=UNLESBAR if exc.quelle_antwortete else STUMM)
 
     parsed = parse_key_figures(payload.decode("utf-8-sig", errors="replace"))
     if not parsed.get("parsed"):
-        return _degraded_envelope(f"Schlüsselzahlen nicht lesbar: {parsed.get('reason')}")
+        return _degraded_envelope(
+            f"Schlüsselzahlen nicht lesbar: {parsed.get('reason')}", kind=UNLESBAR
+        )
 
     all_years = parsed["years"]
     keep = set(all_years[-years:]) if years else set(all_years)
@@ -990,13 +1051,15 @@ async def uvg_by_branch_impl(noga: str | None = None, table: str = "2.4_BUV") ->
     try:
         yy, payload, last_modified = await resolve_latest_edition()
     except UvgSourceUnavailableError as exc:
-        return _degraded_envelope(str(exc))
+        return _degraded_envelope(str(exc), kind=UNLESBAR if exc.quelle_antwortete else STUMM)
 
     pages_layout = _pdf_pages(payload, layout=True)
     pages_text = _pdf_pages(payload)
     parsed = parse_branch_table(pages_layout, pages_text, table)
     if not parsed.get("parsed"):
-        return _degraded_envelope(f"Tabelle {table} nicht lesbar: {parsed.get('reason')}")
+        return _degraded_envelope(
+            f"Tabelle {table} nicht lesbar: {parsed.get('reason')}", kind=UNLESBAR
+        )
 
     meta = _pdf_metadata(payload)
     edition_year = 2000 + yy
@@ -1069,11 +1132,13 @@ async def uvg_trends_impl(
             ),
         )
     except UvgSourceUnavailableError as exc:
-        return _degraded_envelope(str(exc))
+        return _degraded_envelope(str(exc), kind=UNLESBAR if exc.quelle_antwortete else STUMM)
 
     parsed = parse_branch_series(_pdf_pages(payload))
     if not parsed.get("parsed"):
-        return _degraded_envelope(f"Zeitreihe {code}/{scheme} nicht lesbar: {parsed.get('reason')}")
+        return _degraded_envelope(
+            f"Zeitreihe {code}/{scheme} nicht lesbar: {parsed.get('reason')}", kind=UNLESBAR
+        )
 
     indicators = parsed["indicators"]
     if indicator:
