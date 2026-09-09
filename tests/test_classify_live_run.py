@@ -39,6 +39,26 @@ def suite(tests: int, failures: int = 0, errors: int = 0, skipped: int = 0) -> s
     )
 
 
+def suite_mit_skips(tests: int, gruende: list[str], failures: int = 0) -> str:
+    """Wie `suite`, aber mit echten `<skipped message=...>`-Elementen.
+
+    Die Form ist am 9.9.2026 mit der gepinnten pytest-Version gemessen worden,
+    nicht geraten: `pytest.skip("X")` schreibt `message="X"` ohne Praefix, und
+    der Elementtext traegt zusaetzlich Datei und Zeile.
+    """
+    faelle = "".join(
+        f'<testcase classname="t" name="test_{i}">'
+        f'<skipped type="pytest.skip" message="{grund}">t.py:1: {grund}</skipped>'
+        "</testcase>"
+        for i, grund in enumerate(gruende)
+    )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f'<testsuites><testsuite name="pytest" tests="{tests}" failures="{failures}" '
+        f'errors="0" skipped="{len(gruende)}">{faelle}</testsuite></testsuites>'
+    )
+
+
 class ClassifyTest(unittest.TestCase):
     def _state(self, xml: str) -> tuple[str, str]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,6 +98,73 @@ class ClassifyTest(unittest.TestCase):
     def test_ein_fehlschlag_schlaegt_uebersprungene(self):
         state, _ = self._state(suite(tests=6, skipped=5, failures=1))
         self.assertEqual(state, clr.FINDING)
+
+    # -- Die stumme Quelle (Lauf 33953313377 vom 5.9.2026) -------------------
+
+    def test_stumme_quelle_ist_kein_befund(self):
+        """Der Fall, der Issue #72 erzeugt hat.
+
+        unfallstatistik.ch antwortete auf keine Anfrage. Zehn Tests fielen, der
+        Reporter buchte `finding`, und der Workflow behauptete einen gebrochenen
+        Vertrag mit der Quelle. Gemessen war die eigene Erreichbarkeit.
+        """
+        state, reason = self._state(
+            suite_mit_skips(tests=20, gruende=[f"{clr.QUELLE_AUS_MARKE} ConnectError"] * 10)
+        )
+        self.assertEqual(state, clr.UNKNOWN)
+        self.assertIn("10 von 20", reason)
+        self.assertIn("nicht erreicht", reason)
+
+    def test_stumme_quelle_schliesst_kein_offenes_issue(self):
+        """Der Teilausfall ist der gefaehrliche: die halbe Suite war gruen.
+
+        Waere das `clear`, ginge ein offenes Issue mit dem Vermerk «wieder
+        gruen» zu — auf einen Lauf hin, der die Quelle nie erreicht hat. Der
+        Fehlbefund vom 5.9., nur in die andere Richtung.
+        """
+        state, _ = self._state(
+            suite_mit_skips(tests=20, gruende=[f"{clr.QUELLE_AUS_MARKE} ConnectError"])
+        )
+        self.assertNotEqual(state, clr.CLEAR)
+
+    def test_gewoehnlicher_skip_bleibt_gruen(self):
+        """Die Marke traegt die Bedeutung, nicht der Skip.
+
+        Sonst waere aus «ein einzelner Skip ist eine Entscheidung im Test» still
+        «jeder Skip ist ein Ausfall» geworden, und das offene Issue ginge nie zu.
+        """
+        state, reason = self._state(
+            suite_mit_skips(tests=6, gruende=["Windows-only", "braucht Anmeldedaten"])
+        )
+        self.assertEqual(state, clr.CLEAR)
+        self.assertIn("4 von 6", reason)
+
+    def test_ein_echter_befund_schlaegt_die_stumme_quelle(self):
+        """Teilausfall plus ein Fehlschlag bleibt ein Befund.
+
+        Ein Test, der die Quelle erreicht hat und fiel, hat etwas festgestellt.
+        Ihn hinter dem Ausfall der anderen verschwinden zu lassen, waere die
+        teuerste Variante: ein echter Befund ohne Issue.
+        """
+        state, _ = self._state(
+            suite_mit_skips(
+                tests=20, gruende=[f"{clr.QUELLE_AUS_MARKE} ConnectError"] * 9, failures=1
+            )
+        )
+        self.assertEqual(state, clr.FINDING)
+
+    def test_marke_wird_nur_im_message_attribut_gelesen(self):
+        """Ein Testname, der die Marke traegt, loest hier nichts aus."""
+        xml = (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<testsuites><testsuite name="pytest" tests="2" failures="0" errors="0" '
+            'skipped="1"><testcase classname="t" name="test_QUELLE-AUS_liest_sich_so">'
+            '<skipped type="pytest.skip" message="Windows-only">'
+            "t.py:1: QUELLE-AUS: steht nur im Text</skipped></testcase>"
+            "</testsuite></testsuites>"
+        )
+        state, _ = self._state(xml)
+        self.assertEqual(state, clr.CLEAR)
 
     def test_mehrere_testsuites_werden_summiert(self):
         xml = (

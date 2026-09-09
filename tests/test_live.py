@@ -9,6 +9,10 @@ By default they are skipped (see conftest.py); run them explicitly with:
 CI excludes this file via `pytest -m "not live"`.
 """
 
+import sys
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from seco_labor_mcp import kantone, sources, uvg
@@ -25,6 +29,91 @@ from seco_labor_mcp.server import (
     seco_list_cantons,
     seco_search_datasets,
 )
+
+# Die Marke fuer «Quelle hat nicht geantwortet» wohnt beim Reporter, der sie
+# liest — `scripts/` ist kein Paket, deshalb der Pfad-Einschub. Eine zweite
+# Kopie hier wuerde beim naechsten Umformulieren still auseinanderlaufen.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from classify_live_run import QUELLE_AUS_MARKE  # noqa: E402
+
+
+def _quelle_muss_geantwortet_haben(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Ueberspringt den Test, wenn die Quelle gar nicht geantwortet hat.
+
+    Ein Live-Test misst den Vertrag mit der Quelle. Kam keine Antwort, hat er
+    ihn nicht gemessen — das ist ein Skip und kein Fehlschlag. Als Fehlschlag
+    gebucht, wird daraus ein Issue, das einen Vergleich behauptet, den es nie
+    gab; am 5.9.2026 ist genau das passiert (Issue #72, Lauf 33953313377).
+
+    Der Unterschied zwischen den beiden `degraded`-Wegen ist der ganze Punkt.
+    ``unreachable`` heisst: kein Transport, keine Auskunft, nichts gemessen.
+    ``unreadable`` heisst: Die Quelle hat geantwortet und ihr Layout oder ihre
+    Adressen bewegt — der Befund, fuer den diese Suite ueberhaupt existiert.
+    Wer pauschal auf ``degraded`` ueberspraenge, blendete genau ihn aus und
+    haette einen Test gebaut, der bei kaputter Quelle gruen schweigt.
+    """
+    if envelope.get("degraded") and envelope.get("degraded_kind", uvg.STUMM) == uvg.STUMM:
+        pytest.skip(f"{QUELLE_AUS_MARKE} {envelope.get('note') or 'ohne Begruendung'}")
+    assert envelope.get("degraded") is not True, envelope.get("note")
+    return envelope
+
+
+class TestQuelleMussGeantwortetHaben:
+    """Der Waechter selbst — bewusst ohne `live`-Marke, damit die CI ihn faehrt.
+
+    Er entscheidet, ob ein roter Live-Lauf ein Issue erzeugt. Bliebe er
+    ungeprueft, haette dieser Umbau genau die Eigenschaft, gegen die er
+    geschrieben ist: eine Zusicherung, die niemand widerlegen kann.
+    """
+
+    def test_stumme_quelle_wird_uebersprungen(self):
+        with pytest.raises(pytest.skip.Exception) as exc:
+            _quelle_muss_geantwortet_haben(
+                {"degraded": True, "degraded_kind": uvg.STUMM, "note": "ConnectError"}
+            )
+        assert str(exc.value).startswith(QUELLE_AUS_MARKE), (
+            "ohne die Marke findet der Reporter den Ausfall nicht und bucht wieder `finding`"
+        )
+
+    def test_unlesbare_antwort_faellt_durch(self):
+        """Der wichtigste Fall: Hier hat die Quelle geantwortet.
+
+        Wuerde er uebersprungen, bliebe ein gebrochenes Layout still — und die
+        Live-Suite verloere den einzigen Zweck, den sie hat.
+
+        Der Skip wird ausdruecklich abgefangen und in einen Fehlschlag
+        verwandelt. Mit `pytest.raises(AssertionError)` allein stand hier ein
+        Test, der bei entfernter Unterscheidung nicht fiel, sondern sich selbst
+        uebersprang — und ein uebersprungener Test meldet nichts. Die
+        Gegenprobe vom 9.9.2026 hat genau das aufgedeckt.
+        """
+        try:
+            _quelle_muss_geantwortet_haben(
+                {"degraded": True, "degraded_kind": uvg.UNLESBAR, "note": "Layout"}
+            )
+        except pytest.skip.Exception as exc:  # noqa: PT017
+            pytest.fail(f"uebersprungen statt gefallen — der Befund verschwindet still: {exc}")
+        except AssertionError:
+            return
+        pytest.fail("weder uebersprungen noch gefallen: der Waechter laesst alles durch")
+
+    def test_ohne_kind_gilt_stumm(self):
+        """Ein Envelope aus einem aelteren Pfad ohne `degraded_kind`.
+
+        Die vorsichtige Annahme ist «nichts festgestellt»: Sie erzeugt ein
+        Ueberspringen, kein falsches Issue.
+        """
+        with pytest.raises(pytest.skip.Exception):
+            _quelle_muss_geantwortet_haben({"degraded": True, "note": "alt"})
+
+    def test_gesundes_envelope_geht_durch(self):
+        """Auch hier der Skip explizit: uebersprungen ist nicht bestanden."""
+        envelope = {"degraded": False, "rows": [1]}
+        try:
+            assert _quelle_muss_geantwortet_haben(envelope) is envelope
+        except pytest.skip.Exception as exc:  # noqa: PT017
+            pytest.fail(f"gesundes Envelope uebersprungen: {exc}")
 
 
 @pytest.mark.live
@@ -200,8 +289,7 @@ class TestLiveUvg:
 
     @pytest.mark.asyncio
     async def test_overview_live(self):
-        envelope = await uvg.uvg_overview_impl()
-        assert envelope["degraded"] is False, envelope.get("note")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_overview_impl())
         labels = [row["label"] for row in envelope["rows"]]
         assert "BUV" in labels
         assert any("Berufskrankheiten" in label for label in labels)
@@ -210,7 +298,7 @@ class TestLiveUvg:
     async def test_attribution_names_the_real_publisher(self):
         """Herausgeber ist KSUV/SSUV c/o Suva, nicht das SECO. Das Präfix der
         Tools adressiert diesen Server, die Quellenangabe die Quelle."""
-        envelope = await uvg.uvg_overview_impl()
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_overview_impl())
         assert "KSUV" in envelope["source"]
         assert "kommerzielle Nutzung" in envelope["source"]
 
@@ -226,8 +314,7 @@ class TestLiveUvg:
         deshalb nicht auf exakte Gleichheit, sondern auf «kein Kollaps»: ein
         gebrochenes Layout verfehlt das Total um Grössenordnungen, nicht um 1.
         """
-        envelope = await uvg.uvg_by_branch_impl(table=table)
-        assert envelope["degraded"] is False, envelope.get("note")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_by_branch_impl(table=table))
         check = envelope["totals_check"]
         assert check["available"] is True, "Total-Zeile nicht mehr auffindbar"
         assert check["within_tolerance"] is True, (
@@ -241,7 +328,7 @@ class TestLiveUvg:
         Branchenzeilen und die Kategorie «Unbekannt». Untergrenzen grosszügig
         unter dem Ist-Stand (53 Zeilen), damit Bestandspflege den Test nicht
         rot färbt, ein Einbruch aber schon."""
-        envelope = await uvg.uvg_by_branch_impl()
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_by_branch_impl())
         rows = envelope["rows"]
         assert len(rows) >= 40, f"nur {len(rows)} Zeilen — Raster geschrumpft?"
         types = {row["row_type"] for row in rows}
@@ -251,7 +338,7 @@ class TestLiveUvg:
     async def test_range_code_is_findable(self):
         """Die Publikation fasst 41 und 42 zu einer Zeile zusammen; eine
         Abfrage nach 42 muss sie trotzdem finden."""
-        envelope = await uvg.uvg_by_branch_impl(noga="42")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_by_branch_impl(noga="42"))
         assert envelope["returned"] >= 1
         assert "hint" not in envelope
 
@@ -259,7 +346,7 @@ class TestLiveUvg:
     async def test_freshness_comes_from_the_file(self):
         """Die Indexseite branchen_d.htm nennt ein veraltetes Datum. Der
         ausgewiesene Stand muss aus dem PDF stammen, nicht aus dem HTML."""
-        envelope = await uvg.uvg_trends_impl(noga="43")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_trends_impl(noga="43"))
         freshness = envelope["source_freshness"]
         assert freshness["version"], "Versionsstring fehlt"
         assert freshness["published"] >= "2024-01-01", freshness
@@ -269,8 +356,7 @@ class TestLiveUvg:
         """Recall-Untergrenze: Die Quelle führt zwölf Kennzahlen je Branche.
         Fällt das auf wenige, hat der Parser Zeilen verloren."""
         for noga in ("43", "86"):
-            envelope = await uvg.uvg_trends_impl(noga=noga)
-            assert envelope["degraded"] is False, envelope.get("note")
+            envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_trends_impl(noga=noga))
             assert envelope["returned"] >= 10, (
                 f"NOGA {noga}: nur {envelope['returned']} Kennzahlen "
                 f"(übersprungen: {envelope.get('skipped_rows')})"
@@ -280,13 +366,13 @@ class TestLiveUvg:
     async def test_significance_flag_is_present(self):
         """Der Stern der Quelle muss als Flag ankommen und nicht verloren
         gehen — sonst liest sich jede Veränderung als bedeutsam."""
-        envelope = await uvg.uvg_trends_impl(noga="43")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_trends_impl(noga="43"))
         points = [p for ind in envelope["indicators"] for p in ind["series"]]
         assert any(p["significant"] for p in points), "kein einziger Signifikanz-Marker"
 
     @pytest.mark.asyncio
     async def test_unknown_branch_returns_hint(self):
         """Leermenge muss den nächsten Schritt nennen, nicht bloss leer sein."""
-        envelope = await uvg.uvg_trends_impl(noga="04")
+        envelope = _quelle_muss_geantwortet_haben(await uvg.uvg_trends_impl(noga="04"))
         assert envelope["returned"] == 0
         assert "hint" in envelope

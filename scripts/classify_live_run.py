@@ -31,6 +31,27 @@ offenes Issue haette er zugemacht, mit einem Vergleich, den es nie gab.
 `tests - skipped == 0` ist deshalb `unknown` und nicht `clear`. Ein Secret, das
 niemand gesetzt hat, ist kein gruener Vertrag mit der Quelle; es ist gar keiner.
 
+DIE STUMME QUELLE
+-----------------
+Gemessen am 5.9.2026 an diesem Repo (Lauf 33953313377): unfallstatistik.ch
+antwortete auf keine einzige Anfrage — `ConnectError: All connection attempts
+failed`. Zehn Live-Tests fielen, dieser Reporter buchte `finding`, und der
+Workflow eroeffnete Issue #72: «Der Vertrag mit der Quelle ist betroffen.» Am
+naechsten Morgen war die Suite gruen und das Issue schloss sich selbst. Dasselbe
+am 16.8.2026, Issue #34, mit derselben Ursache und demselben Verlauf.
+
+Festgestellt hat so ein Lauf ueber den Vertrag gar nichts. Wer aus einer Stoerung
+einen Befund macht, misst die eigene Erreichbarkeit — und wer zweimal ein Issue
+sieht, das sich von selbst schliesst, sieht beim dritten Mal nicht mehr hin.
+
+Die Live-Tests markieren diesen Fall jetzt selbst: Erreicht ein Test die Quelle
+nicht, ueberspringt er sich mit `QUELLE_AUS_MARKE` als Praefix statt zu fallen.
+Ein solcher Skip ist `unknown`, nie `clear` — auch dann nicht, wenn der Rest der
+Suite gruen war. Sonst schliesst ein halber Ausfall ein echtes offenes Issue.
+
+Die Marke ist unsere eigene und wird hier gesetzt, nicht aus fremdem Text
+geraten. Ein Skip ohne sie bleibt, was er war: eine Entscheidung im Test.
+
 DIE QUELLE IST DAS JUNIT-XML, NICHT DER EXIT-CODE
 -------------------------------------------------
 Der Exit-Code von pytest sagt 0 fuer «alles gruen» und fuer «alles
@@ -57,6 +78,30 @@ from pathlib import Path
 CLEAR = "clear"
 FINDING = "finding"
 UNKNOWN = "unknown"
+
+# Praefix, mit dem ein Live-Test sich selbst ueberspringt, wenn die Quelle nicht
+# geantwortet hat. `tests/test_live.py` importiert die Marke von hier — eine
+# Kopie auf beiden Seiten wuerde beim naechsten Umformulieren auseinanderlaufen,
+# und zwar still: Der Reporter faende die Marke nicht mehr und buchte wieder
+# `finding`, ohne dass irgendetwas rot wird.
+QUELLE_AUS_MARKE = "QUELLE-AUS:"
+
+
+def _quelle_aus(suites: list[ET.Element]) -> int:
+    """Wie viele Tests haben sich uebersprungen, weil die Quelle stumm blieb?
+
+    Gelesen wird das `message`-Attribut von `<skipped>`; dort steht der Grund
+    von `pytest.skip(...)` woertlich, ohne Praefix (gemessen mit pytest 8 im
+    JUnit-XML). Der Elementtext traegt zusaetzlich Datei und Zeile — er wird
+    bewusst nicht gelesen, damit ein Testname, der die Marke zufaellig enthaelt,
+    hier nichts ausloest.
+    """
+    return sum(
+        1
+        for suite in suites
+        for skipped in suite.iter("skipped")
+        if (skipped.get("message") or "").lstrip().startswith(QUELLE_AUS_MARKE)
+    )
 
 
 def classify(report: Path, pytest_exit: int | None = None) -> tuple[str, str]:
@@ -97,6 +142,20 @@ def classify(report: Path, pytest_exit: int | None = None) -> tuple[str, str]:
             "null Tests eingesammelt — die Marke oder die Dateien haben sich "
             "bewegt, und ein Erfolg ohne Test ist kein Erfolg",
         )
+
+    # Vor dem allgemeinen Uebersprungen-Zweig, weil diese Auskunft die genauere
+    # ist: «alle uebersprungen» raet auf ein fehlendes Secret, hier steht die
+    # Ursache fest. Beide enden auf `unknown`, aber der Grund geht ins Log und
+    # in den Issue-Kommentar.
+    stumm = _quelle_aus(suites)
+    if stumm:
+        return (
+            UNKNOWN,
+            f"{stumm} von {tests} Test(s) haben unfallstatistik.ch nicht erreicht — "
+            "ueber den Vertrag mit der Quelle ist damit nichts festgestellt, "
+            "weder im Guten noch im Schlechten",
+        )
+
     if tests - skipped == 0:
         return (
             UNKNOWN,

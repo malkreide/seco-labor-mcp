@@ -497,6 +497,81 @@ class TestOverviewTool:
         text = await seco_get_uvg_overview(UvgOverviewInput())
         assert "nicht erreichbar" in text
 
+    # -- Stumme Quelle vs. unlesbare Antwort --------------------------------
+    #
+    # Beide Wege enden in `degraded: True`, und genau deshalb war der Lauf vom
+    # 5.9.2026 nicht einzuordnen: Ein Ausfall des Transports sah aus wie ein
+    # gebrochener Vertrag mit der Quelle. `degraded_kind` traegt den
+    # Unterschied, den die Live-Suite braucht, um zwischen Ueberspringen und
+    # Rotwerden zu entscheiden.
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_transportfehler_ist_stumm(self):
+        """ConnectError: keine Antwort, also nichts festgestellt."""
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(side_effect=httpx.ConnectError("boom"))
+        envelope = await uvg.uvg_overview_impl()
+        assert envelope["degraded_kind"] == uvg.STUMM
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_fuenfhundertdrei_ist_stumm(self):
+        """Ein 5xx ist eine Stoerung, keine Auskunft ueber den Inhalt."""
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(return_value=httpx.Response(503))
+        envelope = await uvg.uvg_overview_impl()
+        assert envelope["degraded_kind"] == uvg.STUMM
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_vierhundertvier_ist_ein_befund(self):
+        """Ein 404 auf der erwarteten Adresse ist eine Antwort.
+
+        «Ein 4xx ist kein Nein»: Die Quelle hat geantwortet, und dass die
+        Adresse nicht mehr existiert, ist genau der Ausfall, den die Live-Suite
+        melden soll. Als Stoerung gebucht, verschwaende er stillschweigend.
+        """
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(return_value=httpx.Response(404))
+        envelope = await uvg.uvg_overview_impl()
+        assert envelope["degraded_kind"] == uvg.UNLESBAR
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_unlesbare_antwort_ist_ein_befund(self):
+        """Die Quelle antwortet, der Parser findet seine Tabelle nicht."""
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(
+            return_value=httpx.Response(200, content=b"<html><body>nichts</body></html>")
+        )
+        envelope = await uvg.uvg_overview_impl()
+        assert envelope["degraded"] is True
+        assert envelope["degraded_kind"] == uvg.UNLESBAR
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_befund_bekommt_keinen_wiederholungsrat(self):
+        """Einer deterministischen Absage keinen «gleich nochmal» mitgeben.
+
+        Der Rat war frueher in jeder Ausfallmeldung — auch dort, wo ein
+        erneuter Versuch dieselbe Absage liest. Das liest sich fuer das Modell
+        wie eine Stoerung und verdeckt den Befund.
+        """
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(
+            return_value=httpx.Response(200, content=b"<html><body>nichts</body></html>")
+        )
+        note = (await uvg.uvg_overview_impl())["note"]
+        assert "erneut versuchen" not in note
+        assert "hat geantwortet" in note
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_markdown_nennt_die_unlesbare_antwort_beim_namen(self):
+        """Die Ueberschrift darf nicht «nicht erreichbar» behaupten."""
+        respx.get(uvg.UVG_KEY_FIGURES_URL).mock(
+            return_value=httpx.Response(200, content=b"<html><body>nichts</body></html>")
+        )
+        text = await seco_get_uvg_overview(UvgOverviewInput())
+        assert "nicht lesbar" in text
+        assert "Quelle nicht erreichbar" not in text
+
 
 class TestTrendsTool:
     @pytest.mark.asyncio
