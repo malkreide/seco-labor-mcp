@@ -456,19 +456,28 @@ wie der Code: Nichts ist rot, weil nichts geprüft wird, worauf es ankommt.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — 0.16.3, genau eine Quelle
+### ruff — 0.16.5, genau eine Quelle
 
-`ruff==0.16.3` steht in `pyproject.toml`,
+`ruff==0.16.5` steht in `pyproject.toml`,
 `[project.optional-dependencies].dev`, und sonst nirgends.
 `pip install -e ".[dev]"` liefert damit die Version, mit der die CI lintet;
 Anheben genügt an dieser einen Stelle. Eine `.pre-commit-config.yaml` gibt
 es nicht.
 
 **Keine zweite Version in die Workflows schreiben.** `ci.yml` hatte einen
-Schritt `pip install ruff==0.16.3` nach dem dev-Install — der gewinnt gegen
+Schritt `pip install ruff==0.16.1` nach dem dev-Install — der gewinnt gegen
 pyproject, ohne dass etwas rot wird. `tests/test_werkzeug_versionen.py`
 fällt, wenn hier wieder eine Spanne steht oder ein Workflow eine zweite
 Version setzt.
+
+Die `0.16.1` in diesem Absatz ist ein **Zitat aus der Vergangenheit** und
+wird beim Anheben des Pins nicht mitgezogen. Sie nennt, was damals wirklich
+in `ci.yml` stand; die Historie gibt für diesen Schritt keine andere Zahl her.
+Am 30.8.2026 ist sie trotzdem mitgewandert — Commit `1ae7b94` hob den Pin auf
+0.16.3 und ersetzte sie gleich mit, womit der Absatz eine Behauptung über
+`ci.yml` aufstellte, die nie zutraf. Ein Suchen-und-Ersetzen über diese Datei
+trifft also zwei verschiedene Arten von Zahl: die beiden oben, die den
+aktuellen Pin wiedergeben, und diese eine, die es nicht tut.
 
 Vor dem Lauf `ruff --version` prüfen: ein älteres ruff früher im `PATH`
 schlägt den Pin, ohne dass der Install etwas meldet.
