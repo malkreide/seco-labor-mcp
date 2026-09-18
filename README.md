@@ -56,7 +56,7 @@ This server connects AI models to Swiss labor market statistics — unemployment
 │  │  FastMCP    │    │      9 MCP Tools         │   │
 │  │  Server     │◄──►│  seco_search_datasets    │   │
 │  │  (stdio /   │    │  seco_get_dataset        │   │
-│  │   SSE)      │    │  seco_get_unemployment_* │   │
+│  │   HTTP)     │    │  seco_get_unemployment_* │   │
 │  └─────────────┘    │  seco_get_youth_*        │   │
 │         │           │  seco_get_job_seekers    │   │
 │         ▼           │  seco_get_open_positions │   │
@@ -219,22 +219,33 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Cloud / SSE
+### Cloud / HTTP
 
 ```bash
 pip install seco-labor-mcp
-MCP_TRANSPORT=sse PORT=8000 seco-labor-mcp
+MCP_TRANSPORT=http PORT=8000 seco-labor-mcp
 ```
 
-The SSE server binds to **`127.0.0.1` (loopback) by default** to prevent
+`http` is the transport to use. It is the only one that can carry the modern
+protocol era: measured against this server object, `http` negotiates
+**`2026-07-28`** while `sse` caps every client at **`2025-11-25`**, even a
+client that offers the modern era. `sse` and `streamable-http` remain accepted
+for existing deployments — `tests/test_transport_aera.py` runs both and records
+which era each one actually yields.
+
+The HTTP server binds to **`127.0.0.1` (loopback) by default** to prevent
 NeighborJack on shared networks. For container deployments where you actually
 need to accept traffic from outside the container, set `HOST=0.0.0.0`
 explicitly — ideally in your Dockerfile / orchestrator config, and only behind
 an upstream proxy or firewall:
 
 ```bash
-HOST=0.0.0.0 MCP_TRANSPORT=sse PORT=8000 seco-labor-mcp   # container only
+HOST=0.0.0.0 MCP_TRANSPORT=http PORT=8000 seco-labor-mcp   # container only
 ```
+
+An unknown `MCP_TRANSPORT` value now exits with an error. It used to fall back
+to stdio silently, so a typo produced a server that simply never appeared on
+the expected port.
 
 ### Development
 
@@ -364,22 +375,34 @@ restriction in its `source` field, because a README is not passed to the model.
 
 ## MCP Protocol Version
 
-The protocol version is negotiated at the `initialize` handshake by the SDK,
-not chosen by this server. The revision it is built and audited against is
-**`2025-11-25`**, which is `LATEST_PROTOCOL_VERSION` in the pinned `mcp`
-release that fastmcp brings in.
+This server serves **two protocol eras** over the same server object, on
+fastmcp 4.x / `mcp` 2.x:
 
-`tests/test_protocol_version.py` holds three things against each other: this
-line, that SDK constant, and the revision a real handshake against the server
-object actually returns. An SDK bump that changes the revision therefore fails
-CI instead of drifting silently.
+| Era | Revision | Shape |
+|-----|----------|-------|
+| Modern | **`2026-07-28`** | no handshake — `server/discover`, one self-contained envelope per request |
+| Handshake | **`2025-11-25`** | `initialize`, then a stateful session |
 
-The sister servers in this portfolio pin a *pair* of revisions — a handshake
-ceiling and a modern one — because `mcp` 2.x serves two protocol eras over the
-same server. fastmcp 3.x pins `mcp` 1.x, where `mcp.types.version` does not
-exist and one revision is the whole story. `test_das_sdk_kennt_hier_nur_eine_aera`
-is tied to the SDK rather than to this paragraph and fails the day an upgrade
-brings the two-era constants in.
+A client that offers the modern era gets it; a client that only knows the
+handshake era still gets served. Both are pinned separately in
+`tests/test_protokoll_aeren.py`, and both are *measured* — the test negotiates
+a real connection against this server object rather than comparing two
+constants.
+
+Pinning only `LATEST_PROTOCOL_VERSION` would not be enough: in `mcp` 2.x that
+name is an alias for the *modern* era, so it would leave the handshake ceiling
+free to move — and that ceiling is what most clients in the field actually
+speak.
+
+Until 0.4.0 this server ran fastmcp 3.x, which pins `mcp` 1.x. There
+`2025-11-25` is the highest revision the SDK knows at all, so `2026-07-28` was
+not partially supported — it was absent. The test that used to guard the
+one-era state now guards its opposite: it fails if a downgrade takes the
+modern era away again.
+
+Note for anything reading server metadata: on a modern connection there is no
+`InitializeResult`. Use the era-neutral `protocol_version` / `server_info`
+instead of `initialize_result`.
 
 ---
 

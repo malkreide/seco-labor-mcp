@@ -2476,16 +2476,51 @@ async def seco_get_uvg_trends(params: UvgTrendInput) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Netz-Transporte, die `main()` annimmt. `stdio` steht bewusst nicht drin: es
+# ist der Default und braucht weder Host noch Port.
+#
+# Die drei sind nicht gleichwertig. Gemessen gegen genau dieses Server-Objekt
+# (`tests/test_transport_aera.py`, beide Werte in einem Lauf):
+#
+#   http -> ausgehandelte Revision 2026-07-28
+#   sse  -> ausgehandelte Revision 2025-11-25, auch gegenueber einem Client,
+#           der die moderne Aera ausdruecklich anbietet
+#
+# `sse` ist damit kein zweiter Weg zum selben Ziel, sondern eine Obergrenze:
+# wer ihn waehlt, deckelt *jeden* Client auf die alte Aera. Er bleibt
+# erreichbar, weil bestehende Deployments ihn konfiguriert haben -- aber die
+# READMEs fuehren `http`, und ein Umstellen der Doku zurueck auf `sse` waere
+# eine stille Rueckstufung der Protokoll-Aera.
+NETWORK_TRANSPORTS = ("http", "streamable-http", "sse")
+
+
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    if transport == "sse":
-        # SEC-016: bind to loopback by default. Container deployments
-        # must explicitly set HOST=0.0.0.0 (see Dockerfile/README).
-        mcp.settings.host = os.environ.get("HOST", "127.0.0.1")
-        mcp.settings.port = int(os.environ.get("PORT", "8000"))
-        mcp.run(transport="sse")
-    else:
+    if transport == "stdio":
         mcp.run(transport="stdio")
+        return
+    if transport not in NETWORK_TRANSPORTS:
+        # Frueher fiel jeder unbekannte Wert stumm auf stdio zurueck. Ein
+        # vertipptes `MCP_TRANSPORT=htttp` startete dann einen stdio-Server,
+        # der auf dem erwarteten Port nie erschien -- und die Fehlersuche
+        # begann beim Netz statt beim Tippfehler.
+        raise SystemExit(
+            f"MCP_TRANSPORT={transport!r} ist unbekannt. Erlaubt sind 'stdio' "
+            f"und {', '.join(repr(t) for t in NETWORK_TRANSPORTS)}."
+        )
+    # SEC-016: bind to loopback by default. Container deployments
+    # must explicitly set HOST=0.0.0.0 (see Dockerfile/README).
+    #
+    # Host und Port gehen als Argumente an `run()`, nicht mehr ueber
+    # `mcp.settings`: FastMCP 4 fuehrt kein `settings`-Attribut mehr auf dem
+    # Server-Objekt. Der alte Zweig waere hier mit einem AttributeError
+    # gestorben -- und zwar erst beim Start eines Netz-Deployments, weil kein
+    # Test ihn je aufgerufen hat.
+    mcp.run(
+        transport=transport,
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "8000")),
+    )
 
 
 if __name__ == "__main__":

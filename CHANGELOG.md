@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Geändert
+
+- **Der Server spricht jetzt MCP 2026-07-28 — vorher konnte er es nicht, auch
+  nicht halb.** `fastmcp>=1.0.0,<4` zog die 3.x-Linie, und die pinnt `mcp` 1.x.
+  Dort ist `2025-11-25` die höchste Revision, die das SDK überhaupt kennt: Es
+  gab keine Einstellung, keinen Transport und keinen Client, mit dem dieser
+  Server die neue Spec gesprochen hätte. Der Pin lautet jetzt
+  `fastmcp>=4.0.0,<5` (verifiziert mit 4.0.5 / `mcp` 2.2.0). Die Untergrenze
+  ist dabei die Aussage, nicht die Obergrenze — ein wieder geöffnetes
+  `>=1.0.0` wäre ein Rückfall in die alte Ära, ohne dass etwas rot würde.
+
+  Der Werkzeug-Katalog ändert sich dadurch **nicht**: `tools/list` beider
+  SDK-Majors, in Wire-Form verglichen, ist Byte für Byte identisch — zwölf
+  Werkzeuge, dieselben Schemata, dieselben Annotationen. Was sich ändert, ist
+  ausschliesslich die Protokollform darunter.
+
+- **`MCP_TRANSPORT=http` statt `sse`.** Die Ära hängt nicht nur am SDK, sondern
+  am Transport. Gegen dieses Server-Objekt gemessen: `http` handelt
+  `2026-07-28` aus, `sse` deckelt auf `2025-11-25` — auch gegenüber einem
+  Client, der die moderne Ära ausdrücklich anbietet. Die moderne Ära ist ein
+  in sich geschlossener POST ohne `initialize`; diese Form hat SSE nicht. Ein
+  Server, der `sse` führt, spricht die neue Spec also nicht, egal welches SDK
+  er pinnt. `sse` und `streamable-http` bleiben erreichbar, die Doku führt
+  `http`.
+
+### Behoben
+
+- **`main()` wäre unter FastMCP 4 beim Start eines Netz-Deployments gestorben,
+  und kein Test hätte es gesehen.** Der SSE-Zweig setzte `mcp.settings.host`
+  und `.port`; FastMCP 4 führt kein `settings`-Attribut mehr auf dem
+  Server-Objekt. Der AttributeError wäre im Container gekommen, nie in der CI —
+  die Test-Suite ruft `main()` bis dahin nirgends auf. Host und Port gehen
+  jetzt als Argumente an `run()`, und `tests/test_transport_aera.py` ruft
+  `main()` wirklich auf, statt den Code zu lesen.
+
+- **Ein unbekannter `MCP_TRANSPORT` fiel stumm auf stdio zurück.** Ein
+  vertipptes `MCP_TRANSPORT=htttp` startete damit einen stdio-Server, der auf
+  dem erwarteten Port schlicht nie erschien — und die Fehlersuche begann beim
+  Netz statt beim Tippfehler. Dieselbe Klasse wie eine leere Trefferliste, die
+  wie eine echte Leermenge aussieht. Unbekannte Werte brechen jetzt mit einer
+  Meldung ab, die die erlaubten nennt.
+
+- **Der Ein-Ära-Pin bewachte ab jetzt die falsche Hälfte.**
+  `tests/test_protocol_version.py` heisst neu `tests/test_protokoll_aeren.py`
+  und pinnt ein Paar: die Handshake-Obergrenze `2025-11-25` und die moderne
+  Revision `2026-07-28`. Nur gegen `LATEST_PROTOCOL_VERSION` zu pinnen hätte
+  nicht gereicht — in `mcp` 2.x ist dieser Name ein Alias auf die *moderne*
+  Ära, und die Handshake-Obergrenze, die die meisten Clients im Feld sprechen,
+  dürfte damit frei wandern. Beide Revisionen werden gegen eine echte
+  Verbindung gemessen, nicht gegen eine zweite Konstante. Der alte Test
+  `test_das_sdk_kennt_hier_nur_eine_aera` ist durch sein Gegenteil ersetzt: Er
+  fällt, wenn ein Downgrade die moderne Ära wieder wegnimmt.
+
+  Nebenbei aufgefallen und mitgezogen: Unter der modernen Ära gibt es kein
+  `InitializeResult` — `client.initialize_result` ist `None`. Der alte Test las
+  genau dort die Revision ab und starb am Upgrade mit einem `AttributeError`
+  auf `None`. Wer Server-Metadaten so liest, verliert sie an dem Tag, an dem
+  ein Client die moderne Ära wählt; Ära-neutral sind `protocol_version` und
+  `server_info`.
+
 ### Behoben
 
 - **Zug las den zweiten Datensatz ungeprüft — und hätte die

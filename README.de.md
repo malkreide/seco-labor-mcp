@@ -185,6 +185,35 @@ Eintrag in `claude_desktop_config.json`:
 }
 ```
 
+### Cloud / HTTP
+
+```bash
+pip install seco-labor-mcp
+MCP_TRANSPORT=http PORT=8000 seco-labor-mcp
+```
+
+`http` ist der Transport der Wahl — und der einzige, der die moderne
+Protokoll-Ära trägt. Gegen dieses Server-Objekt gemessen: `http` handelt
+**`2026-07-28`** aus, `sse` deckelt jeden Client auf **`2025-11-25`**, auch
+einen, der die moderne Ära ausdrücklich anbietet. `sse` und `streamable-http`
+bleiben für bestehende Deployments erreichbar;
+`tests/test_transport_aera.py` fährt beide und hält fest, welche Ära dabei
+wirklich herauskommt.
+
+Der HTTP-Server bindet standardmässig auf **`127.0.0.1` (Loopback)**, um
+NeighborJack in geteilten Netzen zu verhindern. Für Container-Deployments, die
+Verkehr von aussen annehmen müssen, `HOST=0.0.0.0` ausdrücklich setzen — am
+besten im Dockerfile bzw. in der Orchestrator-Konfiguration, und nur hinter
+einem vorgelagerten Proxy oder einer Firewall:
+
+```bash
+HOST=0.0.0.0 MCP_TRANSPORT=http PORT=8000 seco-labor-mcp   # nur im Container
+```
+
+Ein unbekannter Wert in `MCP_TRANSPORT` bricht jetzt mit einer Fehlermeldung
+ab. Vorher fiel er stumm auf stdio zurück — ein Tippfehler erzeugte damit
+einen Server, der auf dem erwarteten Port schlicht nie erschien.
+
 ---
 
 ## Schlüsselkonzepte
@@ -270,22 +299,33 @@ weitergereicht wird.
 
 ## MCP-Protokollversion
 
-Die Protokollversion handelt das SDK beim `initialize`-Handshake aus, dieser
-Server wählt sie nicht. Die Revision, gegen die er gebaut und geprüft ist,
-lautet **`2025-11-25`** — das ist `LATEST_PROTOCOL_VERSION` in der `mcp`-Version,
-die fastmcp hereinzieht.
+Dieser Server bedient auf fastmcp 4.x / `mcp` 2.x **zwei Protokoll-Ären** über
+dasselbe Server-Objekt:
 
-`tests/test_protocol_version.py` hält drei Dinge gegeneinander: diese Zeile,
-jene SDK-Konstante und die Revision, die ein echter Handshake gegen das
-Server-Objekt tatsächlich zurückgibt. Ein SDK-Bump, der die Revision ändert,
-macht die CI rot, statt lautlos zu driften.
+| Ära | Revision | Form |
+|-----|----------|------|
+| modern | **`2026-07-28`** | kein Handshake — `server/discover`, pro Anfrage ein eigener Umschlag |
+| Handshake | **`2025-11-25`** | `initialize`, danach eine Sitzung mit Zustand |
 
-Die Schwester-Server im Portfolio pinnen ein *Paar* von Revisionen — eine
-Handshake-Obergrenze und eine moderne —, weil `mcp` 2.x zwei Protokoll-Ären über
-denselben Server bedient. fastmcp 3.x pinnt `mcp` 1.x, wo es `mcp.types.version`
-nicht gibt und eine Revision die ganze Geschichte ist.
-`test_das_sdk_kennt_hier_nur_eine_aera` ist an das SDK gebunden statt an diesen
-Absatz und fällt, sobald ein Upgrade die Zwei-Ären-Konstanten hereinzieht.
+Ein Client, der die moderne Ära anbietet, bekommt sie; einer, der nur den
+Handshake kennt, wird weiter bedient. Beide sind in
+`tests/test_protokoll_aeren.py` einzeln gepinnt — und beide werden *gemessen*:
+Der Test handelt eine echte Verbindung gegen dieses Server-Objekt aus, statt
+zwei Konstanten miteinander zu vergleichen.
+
+Nur gegen `LATEST_PROTOCOL_VERSION` zu pinnen würde nicht reichen: In `mcp` 2.x
+ist dieser Name ein Alias auf die *moderne* Ära. Die Handshake-Obergrenze
+dürfte damit frei wandern — und genau die sprechen die meisten Clients im Feld.
+
+Bis 0.4.0 lief dieser Server auf fastmcp 3.x, und das pinnt `mcp` 1.x. Dort ist
+`2025-11-25` die höchste Revision, die das SDK überhaupt kennt; `2026-07-28`
+war also nicht halb unterstützt, sondern gar nicht. Der Test, der früher den
+Ein-Ära-Zustand bewachte, bewacht jetzt dessen Gegenteil: Er fällt, wenn ein
+Downgrade die moderne Ära wieder wegnimmt.
+
+Hinweis für alles, was Server-Metadaten liest: Auf einer modernen Verbindung
+gibt es kein `InitializeResult`. Statt `initialize_result` die Ära-neutralen
+`protocol_version` / `server_info` verwenden.
 
 ---
 
