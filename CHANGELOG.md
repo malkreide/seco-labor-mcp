@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-20
+
+**Auf PyPI folgt diese Version direkt auf 0.3.4 — 0.4.0 fehlt dort, und das
+ist kein Versehen dieses Release.** 0.4.0 wurde nie publiziert: Der Abschnitt
+unten steht seit dem 2026-08-15 im CHANGELOG und die Nummer in
+`pyproject.toml`, aber ein Tag `v0.4.0` wurde nie gesetzt, und ohne Tag läuft
+`publish.yml` nicht an. Die Arbeit aus 0.4.0 ist in `main` und damit in diesem
+Release enthalten; sie hat dort nur nie eine eigene PyPI-Version bekommen.
+
+Die Nummer wird deshalb **nicht** nachträglich wiederverwendet. 0.4.0 als
+Release nachzuschieben hiesse, einen datierten Abschnitt mit Inhalt zu füllen,
+der damals nicht dazugehörte — und die Historie verlöre genau die Auskunft,
+die dieser Absatz gibt.
+
 ### Geändert
+
+- **Die Kurzbeschreibungen nannten nur die halbe Datenlage.** `server.json`
+  führte «SECO labour market: unemployment, vacancies, workforce indicators»,
+  `pyproject.toml` sinngemäss dasselbe — beide aus der Zeit vor den drei
+  `seco_get_uvg_*`-Werkzeugen. Das ist nicht bloss ungenau: Mit diesem Release
+  geht `server.json` erstmals in die MCP Registry, und `pyproject.toml` wird
+  die PyPI-Zusammenfassung. Eine dort einmal gesetzte Beschreibung ist die,
+  nach der gesucht wird. Beide nennen jetzt auch die UVG-Unfallstatistik.
 
 - **Der Server spricht jetzt MCP 2026-07-28 — vorher konnte er es nicht, auch
   nicht halb.** `fastmcp>=1.0.0,<4` zog die 3.x-Linie, und die pinnt `mcp` 1.x.
