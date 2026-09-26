@@ -284,10 +284,12 @@ wie der Code: Nichts ist rot, weil nichts geprüft wird, worauf es ankommt.
 
 ## Teil 2 — Dieses Repo
 
-### ruff — 0.16.5, genau eine Quelle
+### ruff — genau eine Quelle
 
-`ruff==0.16.5` steht in `pyproject.toml`,
-`[project.optional-dependencies].dev`, und sonst nirgends.
+Der Pin steht in `pyproject.toml`,
+`[project.optional-dependencies].dev`, und sonst nirgends — die Version dort
+nachlesen, nicht hier: `tests/test_ruff_pin_doku.py` hält sie aus dieser
+Datei draussen.
 `pip install -e ".[dev]"` liefert damit die Version, mit der die CI lintet;
 Anheben genügt an dieser einen Stelle. Eine `.pre-commit-config.yaml` gibt
 es nicht.
