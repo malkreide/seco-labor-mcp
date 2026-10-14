@@ -20,6 +20,14 @@ updates:
     groups:
       python-dependencies:
         patterns: ["*"]
+        # pypdf steht in pyproject.toml auf eine Minor-Obergrenze, weil schon
+        # ein Minor (6.20.0) die Spaltentrennung der UVG-Tabellen brach. Ein
+        # solcher Bump soll seinen eigenen PR bekommen: Wird er rot, haelt er
+        # nur sich selbst auf und nicht jedes andere Python-Update mit.
+        # Abhaengigkeiten ausserhalb jeder Gruppe kommen laut Dependabot-
+        # Referenz einzeln: «Any outdated dependencies that do not match a
+        # rule are updated in individual pull requests.»
+        exclude-patterns: ["pypdf"]
 
   # Gepinnte Action-Versionen in .github/workflows
   - package-ecosystem: "github-actions"
