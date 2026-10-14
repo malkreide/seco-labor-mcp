@@ -49,7 +49,15 @@ dependencies = [
     # (siehe PROBE_REPORT_UVG.md), es gibt kein CSV/JSON. Der Parser haengt am
     # layout-Extraktionsmodus, dessen Whitespace-Verhalten die Spaltentrennung
     # traegt -- ein Major-Bump darf hier nicht ungefragt einziehen.
-    "pypdf>=5.0.0,<7",
+    #
+    # Dass schon ein Minor genuegt, hat 6.20.0 gezeigt: Es skalierte die
+    # Spaltenabstaende etwa um den Faktor 6 herunter und brach den damals festen
+    # Schwellwert (Live-Suite rot ab 2026-10-10). Die Untergrenze ist die
+    # Aussage: Bis 6.19 streute der Layout-Modus Leerzeichen in die NOGA-Codes
+    # ("0 5 – 0 9"), und in jeder der drei Jahrestabellen fehlten sechs der 53
+    # Zeilen oder trugen einen abgeschnittenen Code -- bei aufgehender
+    # Summenprobe. Verifiziert mit 6.20.0 und 6.20.1 gegen Ts26.pdf.
+    "pypdf>=6.20.0,<7",
     # openpyxl fuer die BFS-Jahrestabelle. Die Reihe der registrierten
     # Arbeitslosen und Stellensuchenden gibt es nur als XLSX -- weder CSV noch
     # SDMX, geprueft am 2026-08-14. Der Parser haengt an der Zellenlesung von

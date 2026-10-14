@@ -306,6 +306,52 @@ class TestBranchTable:
         assert tertiary["disability_pensions_accident"] == 234
 
 
+class TestColumnGap:
+    """Spaltengrenze je Seite statt fester Zahl (siehe ``uvg._column_gap``).
+
+    ``LAYOUT_PAGE`` oben steht im Massstab von pypdf 6.19: Spalten mit 40,
+    Lücken in der Zelle bis 10. Diese Klasse deckt den Massstab von 6.20 ab.
+    Die Aufzeichnung in ``test_recorded_fixtures.py`` prüft das echte PDF.
+    """
+
+    # Ts26.pdf S. 27, Zeile «41 – 42», wie pypdf 6.20.1 sie im Layout-Modus
+    # setzt: in der Zelle 2 Leerzeichen, zwischen den Spalten 157, 23, 25 und
+    # vor «178,4» nur 18 — unter dem früheren festen Schwellwert von 20.
+    ZEILE_620 = (
+        "41  –  42 Hoch- und Tiefbau"
+        + " " * 157 + "14 9 91"
+        + " " * 23 + "92"
+        + " " * 25 + "1"
+        + " " * 25 + "9"
+        + " " * 25 + "2"
+        + " " * 18 + "178,4"
+    )  # fmt: skip
+
+    def test_trennt_im_massstab_von_pypdf_6_20(self):
+        gap = uvg._column_gap(self.ZEILE_620)
+        assert gap is not None
+        assert uvg._layout_cells(self.ZEILE_620, gap) == [
+            "41  –  42 Hoch- und Tiefbau",
+            "14 9 91",
+            "92",
+            "1",
+            "9",
+            "2",
+            "178,4",
+        ]
+
+    def test_ohne_deutlichen_sprung_keine_grenze(self):
+        assert uvg._column_gap("a  b   c    d") is None
+
+    def test_tabelle_ohne_grenze_ist_unlesbar_statt_geraten(self):
+        """Liegen Spaltenlücken (hier 5) unter den Lücken in der Zelle (bis
+        10), wäre jede Grenze geraten. Dann «nicht lesbar», nicht Zahlen."""
+        seite = LAYOUT_PAGE.replace(GAP, " " * 5)
+        ergebnis = uvg.parse_branch_table([seite], [TEXT_PAGE], "2.4_BUV")
+        assert ergebnis["parsed"] is False
+        assert "Spaltengrenze" in ergebnis["reason"]
+
+
 class TestBranchSeries:
     def _parse(self):
         return uvg.parse_branch_series([SERIES_PAGE])

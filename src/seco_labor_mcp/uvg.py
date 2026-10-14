@@ -269,7 +269,7 @@ async def _fetch_bytes(url: str, *, allow_404: bool = False) -> tuple[bytes, str
 # Aus dem Text allein ist die Zerlegung nicht rekonstruierbar: "166 534 234" ist
 # als 166534234 genauso gültig wie als 166 534 | 234. Deshalb kommen die Zahlen
 # der Jahrestabellen aus dem Layout-Modus, wo die Spaltenabstände des Satzes
-# erhalten sind (siehe _COLUMN_GAP und _merge_layout_rows).
+# erhalten sind (siehe _column_gap und _merge_layout_rows).
 
 _SIGNIFICANT_RE = re.compile(r"\*")
 
@@ -304,22 +304,53 @@ def parse_number(token: str) -> tuple[float | int | None, bool]:
     return value, significant
 
 
-# Spaltengrenze im Layout-Modus. Empirisch bestimmt, nicht geraten: Auf den
-# Tabellenseiten 13 und 27 der Ausgabe 2026 reichen Lücken innerhalb von Zahlen
-# und Labels bis 10 Leerzeichen, die kleinste Lücke ZWISCHEN zwei Spalten misst
-# 113. Der Schwellwert liegt im leeren Band dazwischen.
-_COLUMN_GAP = re.compile(r" {20,}")
+# Spaltengrenze im Layout-Modus — je Seite gemessen, nicht als feste Zahl.
+#
+# Der Layout-Modus bildet Spaltenabstände als Leerzeichen nach, in einem
+# Massstab, den pypdf selbst wählt. pypdf 6.20 hat ihn geändert. Gemessen auf
+# Ts26.pdf S. 13, 27 und 28 (2026-10-14):
+#
+#   pypdf 6.19   innerhalb einer Zelle bis 10 Leerzeichen, zwischen Spalten ab 113
+#   pypdf 6.20   innerhalb einer Zelle bis 2,              zwischen Spalten ab 17
+#
+# Der frühere feste Schwellwert von 20 lag unter 6.19 im leeren Band und traf
+# unter 6.20 mitten in die Spaltenlücken: Vor einer vierstelligen Kostenzahl
+# («813,7») stehen dort nur 17 Leerzeichen. Die letzten zwei Werte verklebten,
+# die Zeile hatte eine Zelle zu wenig und fiel weg — Sektor II und III aus
+# Tabelle 2.4 BUV, die Summenprobe verfehlte das Total um 256 536.
+#
+# Stabil ist nur die Form: Lücken innerhalb einer Zelle und Lücken zwischen
+# Spalten bilden zwei Gruppen mit einem Sprung dazwischen (oben Faktor 11 und
+# 8,5). Die Grenze liegt deshalb am grössten Sprung der Lückenlängen einer
+# Seite. Ohne deutlichen Sprung ist die Seite nicht verlässlich zu zerlegen,
+# und dann ist «nicht lesbar» die ehrliche Antwort, nicht eine geratene Grenze.
+_MIN_GAP_RATIO = 3
+
+
+def _column_gap(page_text: str) -> re.Pattern[str] | None:
+    """Spaltengrenze einer Layout-Seite: die Lückenlänge über dem grössten Sprung."""
+    lengths = sorted(
+        {len(run) for line in page_text.split("\n") for run in re.findall(r" +", line.strip())}
+    )
+    if len(lengths) < 2:
+        return None
+    inner, outer = max(zip(lengths, lengths[1:]), key=lambda pair: pair[1] / pair[0])
+    if outer < _MIN_GAP_RATIO * inner:
+        return None
+    return re.compile(f" {{{outer},}}")
+
 
 # Textmodus zerlegt "261 446" nicht eindeutig — als Tausendertrenner steht dort
 # dasselbe Zeichen wie zwischen den Spalten, und «261 446 573» ist als 261446573
 # genauso lesbar wie als 261 446 | 573. Der Layout-Modus setzt stattdessen die
-# Spaltenabstände des Satzes um; damit ist die Zerlegung eindeutig. Preis dafür:
-# er streut Leerzeichen in Wörter ("Sek tor", "Forstwir tschaf t"). Zahlen kommen
-# deshalb aus dem Layout-Modus, Beschriftungen aus dem Textmodus.
+# Spaltenabstände des Satzes um; damit ist die Zerlegung eindeutig. Preis dafür
+# bis pypdf 6.19: er streute Leerzeichen in Wörter ("Sek tor", "Forstwir
+# tschaf t") und in Codes ("0 5 – 0 9"). Zahlen kommen deshalb aus dem
+# Layout-Modus, Beschriftungen aus dem Textmodus.
 
 
-def _layout_cells(line: str) -> list[str]:
-    return [c.strip() for c in _COLUMN_GAP.split(line.strip()) if c.strip()]
+def _layout_cells(line: str, gap: re.Pattern[str]) -> list[str]:
+    return [c.strip() for c in gap.split(line.strip()) if c.strip()]
 
 
 _DIGIT_ONLY = re.compile(r"^[\d\s]+$")
@@ -386,7 +417,9 @@ def _append_label(head: str, tail: str) -> str:
     return f"{head} {tail.lstrip()}".strip()
 
 
-def _merge_layout_rows(page_text: str, n_values: int) -> list[tuple[str, list[str]]]:
+def _merge_layout_rows(
+    page_text: str, n_values: int, gap: re.Pattern[str]
+) -> list[tuple[str, list[str]]]:
     """Zerlege eine Tabellenseite in ``(label, werte)`` und heile Zeilenumbrüche.
 
     Umgebrochene Tabellenzeilen treten in zwei Formen auf, beide in der Probe
@@ -403,7 +436,7 @@ def _merge_layout_rows(page_text: str, n_values: int) -> list[tuple[str, list[st
     pending_prefix: str | None = None
 
     for raw_line in page_text.split("\n"):
-        cells = _layout_cells(raw_line)
+        cells = _layout_cells(raw_line, gap)
         if not cells:
             continue
 
@@ -678,13 +711,20 @@ def parse_branch_table(
     if page_index is None:
         return {"parsed": False, "reason": f"{spec['caption']} im Dokument nicht gefunden"}
 
+    gap = _column_gap(pages_layout[page_index])
+    if gap is None:
+        return {
+            "parsed": False,
+            "reason": f"{spec['caption']}: keine Spaltengrenze im Layout-Text erkennbar",
+        }
+
     columns: list[str] = spec["columns"]
     clean_labels = _raw_label_map(pages_text[page_index])
 
     rows: list[dict[str, Any]] = []
     printed_total: dict[str, Any] | None = None
 
-    for raw_label, raw_values in _merge_layout_rows(pages_layout[page_index], len(columns)):
+    for raw_label, raw_values in _merge_layout_rows(pages_layout[page_index], len(columns), gap):
         key = _row_key(raw_label)
         label = clean_labels.get(key, re.sub(r"\s+", " ", raw_label).strip())
 

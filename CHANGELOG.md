@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Behoben
+
+- **Tabelle 2.4 BUV verlor ihre Sektoren II und III — nicht weil die Quelle
+  sich änderte, sondern pypdf.** `Ts26.pdf` liegt seit dem 2026-06-12
+  unverändert online. pypdf 6.20.0 (2026-10-09) setzt im Layout-Modus die
+  Spaltenabstände rund sechsmal enger: vor einer vierstelligen Kostenzahl
+  stehen noch 17 Leerzeichen, der feste Schwellwert lag bei 20. Die letzten
+  zwei Werte verklebten, fünf Zeilen (II, III, 41 – 42, 43, 78) fielen weg,
+  die Summenprobe verfehlte das Total um 256 536, und eine Abfrage nach
+  NOGA 42 antwortete «Kein Wirtschaftszweig mit diesem Code im
+  Publikationsraster». Die Spaltengrenze
+  wird jetzt je Seite am grössten Sprung der Lückenlängen bestimmt; ohne
+  deutlichen Sprung meldet der Parser «nicht lesbar» statt zu raten.
+
+- **Auch der grüne Stand davor war unvollständig.** Unter pypdf bis 6.19
+  streute der Layout-Modus Leerzeichen in die NOGA-Codes («0 5 – 0 9»). In
+  jeder der drei Jahrestabellen kamen nur 47 von 53 Code-Zeilen richtig an:
+  «01», «31» und «97» standen für «01 – 03», «31 – 33» und «97 – 98»,
+  «05 – 09», «29 – 30» und «88» fehlten ganz. Die Summenprobe sieht nur
+  Sektoren und «Unbekannt» und blieb grün. Die Untergrenze lautet deshalb
+  `pypdf>=6.20.0` (verifiziert mit 6.20.0 und 6.20.1); mit ihr kommen alle
+  53 Zeilen an, und jeder Wert stimmt Ziffer für Ziffer mit dem Textmodus.
+
+- **Die Offline-Suite prüft das aufgezeichnete Jahres-PDF jetzt auf Summe und
+  Vollständigkeit.** Bisher prüfte sie nur, dass Zeilen und eine Total-Zeile
+  da sind — und blieb unter pypdf 6.20 mit allen 297 Tests grün. Ein Bruch
+  aus dem Extraktor wird damit in der CI des Pull Requests rot, der ihn
+  einzieht, und nicht erst im nächtlichen Live-Lauf.
+
 ## [0.5.0] - 2026-09-20
 
 **Auf PyPI folgt diese Version direkt auf 0.3.4 — 0.4.0 fehlt dort, und das
