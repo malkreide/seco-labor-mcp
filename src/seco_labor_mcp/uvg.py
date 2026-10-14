@@ -984,9 +984,10 @@ def _degraded_envelope(reason: str, *, kind: str = STUMM) -> dict[str, Any]:
     else:
         note = (
             "unfallstatistik.ch hat geantwortet, die Antwort war aber nicht wie erwartet "
-            f"lesbar. Ursache: {reason}. Ein erneuter Versuch ändert daran nichts — die "
-            "Quelle hat vermutlich ihr Layout oder ihre Adressen geändert. Die "
-            "Publikationen sind unter unfallstatistik.ch direkt abrufbar."
+            f"lesbar. Ursache: {reason}. Ein erneuter Versuch ändert daran nichts — "
+            "geändert hat sich vermutlich das Layout oder eine Adresse der Quelle oder "
+            "die Art, wie dieser Server sie liest. Die Publikationen sind unter "
+            "unfallstatistik.ch direkt abrufbar."
         )
     return build_envelope(
         provenance="unavailable",
@@ -1098,6 +1099,29 @@ async def uvg_overview_impl(years: int = 5, include_nbuv: bool = False) -> dict[
     )
 
 
+def _totals_failure(table: str, check: dict[str, Any], page: int, url: str) -> str | None:
+    """Begründung, wenn die Summenprobe die Zeilen nicht trägt — sonst ``None``.
+
+    Nicht durchführbar zählt wie verfehlt: Ohne gedruckte Total-Zeile ist
+    nicht zu sehen, ob Zeilen fehlen, und dieselbe Spaltentrennung, die
+    Zeilen verliert, kann auch die Total-Zeile verlieren.
+    """
+    if check.get("within_tolerance"):
+        return None
+    if check.get("available"):
+        finding = (
+            f"Summenprobe verfehlt, die Zeilen ergeben {check['sum_rows']}, gedruckt sind "
+            f"{check['printed_total']} (Delta {check['delta']:+})"
+        )
+    else:
+        finding = "keine gedruckte Total-Zeile gefunden, die Summenprobe ist nicht durchführbar"
+    return (
+        f"Tabelle {table}: {finding}. Welche Zeilen fehlen oder falsch gelesen sind, lässt "
+        "sich daraus nicht sagen, deshalb gibt dieser Server keine aus — eine Teilmenge "
+        f"sähe aus wie das vollständige Raster. Die Tabelle steht in {url} auf S. {page}"
+    )
+
+
 async def uvg_by_branch_impl(noga: str | None = None, table: str = "2.4_BUV") -> dict[str, Any]:
     """Unfallrisiko und anerkannte Fälle je Wirtschaftszweig (NOGA 2008)."""
     try:
@@ -1112,6 +1136,18 @@ async def uvg_by_branch_impl(noga: str | None = None, table: str = "2.4_BUV") ->
         return _degraded_envelope(
             f"Tabelle {table} nicht lesbar: {parsed.get('reason')}", kind=UNLESBAR
         )
+
+    # Die Zeilen sind nur so gut wie ihre Summenprobe. Ab 2026-10-10 verfehlte
+    # 2.4 BUV das Total um 256 536, und der Envelope lieferte die übrigen Zeilen
+    # trotzdem aus, die Probe stand bloss in `totals_check` daneben. Eine
+    # Abfrage nach NOGA 42 bekam vier Tage lang `_NO_MATCH_HINT` — eine falsche
+    # Sachauskunft statt einer Störungsmeldung. Hält die Probe nicht, kommt
+    # deshalb keine Zeile, und damit auch kein «gibt es nicht».
+    failure = _totals_failure(
+        table, parsed["totals_check"], parsed["page"], UVG_ANNUAL_PDF_URL.format(yy=yy)
+    )
+    if failure:
+        return _degraded_envelope(failure, kind=UNLESBAR)
 
     meta = _pdf_metadata(payload)
     edition_year = 2000 + yy

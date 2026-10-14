@@ -2380,8 +2380,12 @@ async def seco_get_uvg_by_branch(params: UvgBranchInput) -> str:
     seco_get_unemployment_by_occupation for vocational guidance: a Lehrberuf
     recommendation can weigh demand against occupational risk.
 
-    Every response carries a totals check: the parsed rows are summed and
-    compared against the total printed in the publication.
+    Rows are only returned after a totals check: the parsed rows are summed
+    and compared against the total printed in the publication (`totals_check`).
+    If the check fails or cannot run, the response carries no rows and is
+    marked unreadable — the rows cannot be trusted then, and an empty match
+    says nothing about whether a branch exists. Point the user to the
+    publication named in the note.
 
     Args:
         params (UvgBranchInput): noga, table, response_format
