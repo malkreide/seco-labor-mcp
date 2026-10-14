@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Geändert
+
+- **`seco_get_uvg_by_branch` liefert keine Zeilen mehr, wenn die Summenprobe
+  nicht hält.** Bisher stand die Probe nur als `totals_check` neben den
+  Zeilen. Vom 2026-10-10 bis zum Fix weiter unten verfehlte 2.4 BUV das
+  Total um 256 536, und das Werkzeug lieferte die übrigen 49 Zeilen trotzdem
+  aus. Eine Abfrage nach NOGA 42 bekam «Kein Wirtschaftszweig mit diesem Code
+  im Publikationsraster» — eine falsche Sachauskunft statt einer
+  Störungsmeldung. Jetzt antwortet das Werkzeug in diesem Fall «nicht lesbar»
+  (`degraded_kind: unreadable`), nennt Delta und Fundstelle im PDF und gibt
+  keine Zeile und keinen Hinweis auf Abwesenheit aus. Eine fehlende
+  Total-Zeile zählt wie eine verfehlte Probe; die Rundungstoleranz der Quelle
+  bleibt wirksam. Der Live-Lauf meldet einen solchen Bruch weiterhin als
+  Befund.
+
 ### Behoben
 
 - **Tabelle 2.4 BUV verlor ihre Sektoren II und III — nicht weil die Quelle

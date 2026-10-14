@@ -36,10 +36,12 @@ from seco_labor_mcp.server import (
     JobSeekersInput,
     ResponseFormat,
     UnemploymentInput,
+    UvgBranchInput,
     YouthUnemploymentInput,
     seco_get_dataset,
     seco_get_job_seekers,
     seco_get_unemployment_overview,
+    seco_get_uvg_by_branch,
     seco_get_youth_unemployment,
     seco_search_datasets,
 )
@@ -501,6 +503,129 @@ def test_die_jahrestabellen_kommen_vollstaendig_an(tabelle, unbekannt):
     fremd = [c for c in codes if c not in TS26_RASTER]
     assert codes == TS26_RASTER, f"fehlend: {fehlend}, fremd: {fremd}"
     assert sum(z["row_type"] == "unknown" for z in zeilen) == unbekannt
+
+
+# --------------------------------------------------------------------------
+# Die Summenprobe haelt das Werkzeug an, nicht nur den Test
+# --------------------------------------------------------------------------
+
+# Die fuenf Zeilen, die ab 2026-10-10 unter pypdf 6.20 aus 2.4 BUV fielen. Aus
+# dem echten Ergebnis entfernt statt nachgebildet: So steht genau der Zustand
+# jener vier Tage auf dem Tisch, mit demselben Delta von -256 536.
+VERLOREN_AB_10_10 = {"II", "41 – 42", "43", "III", "78"}
+
+
+def _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch) -> None:
+    async def ausgabe():
+        return 26, fixture_bytes("uvg_jahresbericht_ts26.pdf"), None
+
+    monkeypatch.setattr(uvg, "resolve_latest_edition", ausgabe)
+
+
+def _parser_mit_eingriff(monkeypatch, eingriff) -> None:
+    """Der echte Parser, danach `eingriff(ergebnis)`, danach die Probe neu."""
+    echt = uvg.parse_branch_table
+
+    def parse(pages_layout, pages_text, table):
+        ergebnis = echt(pages_layout, pages_text, table)
+        eingriff(ergebnis)
+        ergebnis["totals_check"] = uvg._totals_check(
+            ergebnis["rows"], ergebnis["printed_total"], ergebnis["columns"][0]
+        )
+        return ergebnis
+
+    monkeypatch.setattr(uvg, "parse_branch_table", parse)
+
+
+def _wie_ab_10_10(ergebnis) -> None:
+    ergebnis["rows"] = [z for z in ergebnis["rows"] if z.get("code") not in VERLOREN_AB_10_10]
+
+
+async def test_bestandene_probe_liefert_das_raster(monkeypatch):
+    """Positivkontrolle: Ohne Eingriff kommen alle Zeilen, und NOGA 42 findet
+    die Sammelzeile «41 – 42»."""
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    raster = await uvg.uvg_by_branch_impl()
+    assert raster["degraded"] is False
+    assert raster["returned"] == len(TS26_RASTER) + 1  # plus «Unbekannt»
+    treffer = await uvg.uvg_by_branch_impl(noga="42")
+    assert [z["code"] for z in treffer["rows"]] == ["41 – 42"]
+    assert "hint" not in treffer
+
+
+async def test_bei_bestandener_probe_bleibt_eine_luecke_ein_befund(monkeypatch):
+    """Der andere Zweig: Ist das Raster belegt, darf eine Leermenge weiter
+    sagen, dass es die Zeile nicht gibt. NOGA 04 hat keine."""
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    envelope = await uvg.uvg_by_branch_impl(noga="04")
+    assert envelope["degraded"] is False
+    assert envelope["returned"] == 0
+    assert envelope["hint"] == uvg._NO_MATCH_HINT
+
+
+@pytest.mark.parametrize("noga", [None, "42", "86"])
+async def test_verfehlte_probe_liefert_keine_zeilen_und_kein_gibt_es_nicht(monkeypatch, noga):
+    """Der Zustand ab dem 10.10., jetzt als Befund statt als Daten.
+
+    «86» war damals nicht betroffen und kommt trotzdem nicht: Welche Zeilen
+    stimmen, weiss bei verfehlter Probe niemand. «42» bekam damals den
+    Hinweis «Kein Wirtschaftszweig mit diesem Code» — eine falsche
+    Sachauskunft, die hier nicht mehr entstehen darf.
+    """
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    _parser_mit_eingriff(monkeypatch, _wie_ab_10_10)
+    envelope = await uvg.uvg_by_branch_impl(noga=noga)
+    assert envelope["degraded"] is True
+    assert envelope["degraded_kind"] == uvg.UNLESBAR
+    assert "rows" not in envelope
+    assert "hint" not in envelope
+    assert "Delta -256536" in envelope["note"]
+    assert "Ts26.pdf auf S." in envelope["note"], "der Weg zur Quelle gehoert dazu"
+    assert "erneut versuchen" not in envelope["note"]
+
+
+async def test_ohne_total_zeile_gilt_die_probe_nicht_als_bestanden(monkeypatch):
+    """Nicht durchfuehrbar zaehlt wie verfehlt: Dieselbe Spaltentrennung, die
+    Zeilen verliert, kann die Total-Zeile mitnehmen."""
+
+    def ohne_total(ergebnis):
+        ergebnis["printed_total"] = None
+
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    _parser_mit_eingriff(monkeypatch, ohne_total)
+    envelope = await uvg.uvg_by_branch_impl()
+    assert envelope["degraded_kind"] == uvg.UNLESBAR
+    assert "nicht durchführbar" in envelope["note"]
+
+
+async def test_rundung_der_quelle_haelt_die_zeilen_nicht_zurueck(monkeypatch):
+    """Die Toleranz bleibt wirksam. Die Quelle rundet selbst (Ausgabe 2025:
+    Tabelle 1.2 um 1 daneben); eine solche Abweichung ist kein Bruch."""
+
+    def eins_daneben(ergebnis):
+        unbekannt = next(z for z in ergebnis["rows"] if z["row_type"] == "unknown")
+        unbekannt["accepted_cases"] += 1
+
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    _parser_mit_eingriff(monkeypatch, eins_daneben)
+    envelope = await uvg.uvg_by_branch_impl()
+    assert envelope["degraded"] is False
+    assert envelope["totals_check"]["delta"] == 1
+    assert envelope["returned"] == len(TS26_RASTER) + 1
+
+
+@pytest.mark.parametrize("noga", [None, "42"])
+async def test_markdown_zeigt_bei_verfehlter_probe_keine_tabelle(monkeypatch, noga):
+    """Was das Modell tatsaechlich liest: kein «Kein Treffer», keine Zeilen,
+    und keine Ueberschrift, die eine Stoerung behauptet. Beide Abfragen, weil
+    damals die eine eine Tabelle zeigte und die andere «Kein Treffer»."""
+    _aufzeichnung_ist_die_aktuelle_ausgabe(monkeypatch)
+    _parser_mit_eingriff(monkeypatch, _wie_ab_10_10)
+    text = await seco_get_uvg_by_branch(UvgBranchInput(noga=noga))
+    assert "nicht lesbar" in text
+    assert "Kein Treffer" not in text
+    assert "Quelle nicht erreichbar" not in text
+    assert "| Code |" not in text
 
 
 def test_die_gekuerzten_seiten_tragen_ihre_tabellen_vollstaendig():
