@@ -440,6 +440,69 @@ def test_die_jahrestabellen_lesen_sich_aus_dem_echten_pdf(tabelle):
     assert ergebnis["printed_total"], "die gedruckte Total-Zeile gehoert dazu"
 
 
+@pytest.mark.parametrize("tabelle", ["1.2", "2.4_BUV", "2.4_NBUV"])
+def test_die_summenprobe_geht_auch_offline_auf(tabelle):
+    """Die Summenprobe der Live-Suite, hier gegen die Aufzeichnung.
+
+    Live allein reichte nicht. Ab pypdf 6.20.0 (2026-10-09) verfehlte 2.4 BUV
+    das gedruckte Total um 256 536, und diese Datei blieb gruen: Sie pruefte,
+    dass eine Total-Zeile da ist, nicht dass die Zeilen sich zu ihr addieren.
+    Gesehen hat es erst der naechtliche Lauf. Ein Bruch, der aus dem Extraktor
+    kommt und nicht aus der Quelle, gehoert in die CI des Pull Requests, der
+    ihn einzieht.
+
+    Exakt und nicht bloss in der Toleranz: Auf dieser Aufzeichnung geht die
+    Probe in allen drei Tabellen auf 0 auf (gemessen 2026-10-14).
+    """
+    pdf = fixture_bytes("uvg_jahresbericht_ts26.pdf")
+    ergebnis = uvg.parse_branch_table(
+        uvg._pdf_pages(pdf, layout=True), uvg._pdf_pages(pdf), tabelle
+    )
+    check = ergebnis["totals_check"]
+    assert check["available"], check.get("reason")
+    assert check["match"], (
+        f"Zeilen {check['sum_rows']} vs. gedrucktes Total {check['printed_total']} "
+        f"(Delta {check['delta']})"
+    )
+
+
+# Das Raster der Jahrestabellen 1.2 und 2.4: drei Sektoren und 50
+# Branchengruppen, in dieser Reihenfolge und Schreibweise im Textmodus der
+# Aufzeichnung (Ts26.pdf, aufgezeichnet 2026-08-15). Alle drei Tabellen teilen
+# es. Eine Liste und keine Untergrenze: Unter pypdf 6.19 kamen je Tabelle nur
+# 47 Codes richtig an, «01» stand fuer «01 – 03», «05 – 09» fehlte ganz — und
+# sowohl die Summenprobe als auch die Live-Untergrenze von 40 Zeilen hielten
+# das fuer vollstaendig.
+TS26_RASTER = [
+    "I", "01 – 03",
+    "II", "05 – 09", "10 – 12", "13 – 15", "16 – 18", "19 – 20", "21", "22 – 23",
+    "24 – 25", "26", "27", "28", "29 – 30", "31 – 33", "35", "36 – 39", "41 – 42", "43",
+    "III", "45", "46", "47", "49", "50 – 51", "52", "53", "55", "56", "58 – 60", "61",
+    "62 – 63", "64", "65", "66", "68", "69", "70", "71", "72", "73 – 75", "77, 79 – 82",
+    "78", "84", "85", "86", "87", "88", "90 – 93", "94 – 96", "97 – 98", "99",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("tabelle", "unbekannt"), [("1.2", 0), ("2.4_BUV", 1), ("2.4_NBUV", 1)])
+def test_die_jahrestabellen_kommen_vollstaendig_an(tabelle, unbekannt):
+    """Jede Zeile des Rasters, mit vollem Code.
+
+    Die Summenprobe addiert nur Sektoren und «Unbekannt». Ob darunter eine
+    Branche fehlt oder einen abgeschnittenen Code traegt, sieht sie nicht —
+    und eine Abfrage nach NOGA 05 fand dann nichts, ohne dass etwas rot wurde.
+    """
+    pdf = fixture_bytes("uvg_jahresbericht_ts26.pdf")
+    ergebnis = uvg.parse_branch_table(
+        uvg._pdf_pages(pdf, layout=True), uvg._pdf_pages(pdf), tabelle
+    )
+    zeilen = ergebnis["rows"]
+    codes = [z["code"] for z in zeilen if z["row_type"] != "unknown"]
+    fehlend = [c for c in TS26_RASTER if c not in codes]
+    fremd = [c for c in codes if c not in TS26_RASTER]
+    assert codes == TS26_RASTER, f"fehlend: {fehlend}, fremd: {fremd}"
+    assert sum(z["row_type"] == "unknown" for z in zeilen) == unbekannt
+
+
 def test_die_gekuerzten_seiten_tragen_ihre_tabellen_vollstaendig():
     """Gekuerzt ist die Zahl der Seiten, nie ihr Inhalt.
 
