@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bleibt wirksam. Der Live-Lauf meldet einen solchen Bruch weiterhin als
   Befund.
 
+- **pypdf zieht nur noch minorweise ein: `pypdf>=6.20.0,<6.21` statt `<7`.**
+  Unter der Major-Grenze kam 6.20.0 still in jede frische Installation und
+  brach die Spaltentrennung, gesehen hat es erst der nächtliche Live-Lauf.
+  Ein neues Minor kommt jetzt als Dependabot-PR, und dort entscheiden die
+  Offline-Proben gegen das aufgezeichnete Jahres-PDF, ob es trägt.
+  Patch-Releases ziehen weiter frei ein. pypdf ist dafür aus der
+  Dependabot-Sammelgruppe genommen: Ein brechendes Minor hält nur seinen
+  eigenen PR auf, nicht jedes andere Python-Update. Preis: Ein neues Minor
+  wartet bis zum nächsten monatlichen Dependabot-Lauf und auf einen Merge.
+
 ### Behoben
 
 - **Tabelle 2.4 BUV verlor ihre Sektoren II und III — nicht weil die Quelle

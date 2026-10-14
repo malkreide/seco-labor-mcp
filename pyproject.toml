@@ -48,16 +48,25 @@ dependencies = [
     # pypdf fuer die UVG-Tabellen. Die Quelle publiziert ausschliesslich PDF
     # (siehe PROBE_REPORT_UVG.md), es gibt kein CSV/JSON. Der Parser haengt am
     # layout-Extraktionsmodus, dessen Whitespace-Verhalten die Spaltentrennung
-    # traegt -- ein Major-Bump darf hier nicht ungefragt einziehen.
+    # traegt.
     #
-    # Dass schon ein Minor genuegt, hat 6.20.0 gezeigt: Es skalierte die
-    # Spaltenabstaende etwa um den Faktor 6 herunter und brach den damals festen
-    # Schwellwert (Live-Suite rot ab 2026-10-10). Die Untergrenze ist die
-    # Aussage: Bis 6.19 streute der Layout-Modus Leerzeichen in die NOGA-Codes
-    # ("0 5 – 0 9"), und in jeder der drei Jahrestabellen fehlten sechs der 53
-    # Zeilen oder trugen einen abgeschnittenen Code -- bei aufgehender
-    # Summenprobe. Verifiziert mit 6.20.0 und 6.20.1 gegen Ts26.pdf.
-    "pypdf>=6.20.0,<7",
+    # Die Obergrenze steht deshalb auf dem naechsten Minor, nicht auf dem
+    # naechsten Major. Dass schon ein Minor genuegt, hat 6.20.0 gezeigt: Es
+    # skalierte die Spaltenabstaende etwa um den Faktor 6 herunter und brach
+    # den damals festen Schwellwert. Unter `<7` zog es still ein, und gesehen
+    # hat es erst die Live-Suite (rot ab 2026-10-10). Jetzt kommt ein neues
+    # Minor als eigener Dependabot-PR (`.github/dependabot.yml`), und dort
+    # entscheiden die Offline-Proben gegen das aufgezeichnete Jahres-PDF in
+    # `tests/test_recorded_fixtures.py`, ob es traegt. Patch-Releases innerhalb
+    # des Minors ziehen weiter frei ein. `tests/test_pypdf_spanne.py` faellt,
+    # wenn die Grenze wieder auf ein Major geoeffnet wird.
+    #
+    # Die Untergrenze ist die Aussage: Bis 6.19 streute der Layout-Modus
+    # Leerzeichen in die NOGA-Codes ("0 5 – 0 9"), und in jeder der drei
+    # Jahrestabellen fehlten sechs der 53 Zeilen oder trugen einen
+    # abgeschnittenen Code -- bei aufgehender Summenprobe. Verifiziert mit
+    # 6.20.0 und 6.20.1 gegen Ts26.pdf.
+    "pypdf>=6.20.0,<6.21",
     # openpyxl fuer die BFS-Jahrestabelle. Die Reihe der registrierten
     # Arbeitslosen und Stellensuchenden gibt es nur als XLSX -- weder CSV noch
     # SDMX, geprueft am 2026-08-14. Der Parser haengt an der Zellenlesung von
