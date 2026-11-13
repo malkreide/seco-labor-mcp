@@ -259,14 +259,14 @@ wurde, die dort nicht steht.
 Am 23.9.2026 nahm Commit `3371e72` den Codex-Abschnitt aus dieser Datei, mit
 der Begründung, das Repo trage keinen `codex-gate`-Workflow. Für den *Gate*
 stimmt das und bleibt so. Für den *Review-Bot* nicht: Der läuft hier weiter,
-zuletzt gemessen am 13.11.2026 auf PR #91 — Statuskommentar des
+zuletzt gemessen am 13.11.2026 auf PR #92 — Statuskommentar des
 `chatgpt-codex-connector[bot]`, Auslöser «Draft marked ready», Commit
-`6c0c7f4`. Was hier steht, ist deshalb nicht der alte Abschnitt, sondern das,
+`66db6f1`. Was hier steht, ist deshalb nicht der alte Abschnitt, sondern das,
 was seither an ihm gemessen wurde.
 
 **Die Befundlos-Meldung ist weg, die Statustabelle nicht.** Einen Lauf ohne
 Befund meldete Codex früher als gewöhnlichen Issue-Kommentar («Codex Review:
-Didn't find any major issues»). Auf den vier befundlosen Läufen dieses Repos,
+Didn't find any major issues»). Auf den fünf befundlosen Läufen dieses Repos,
 die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 *Review | Status | Commit | Review trigger* hinter dem Marker
 `<!-- codex-pull-request-review-summary -->`, auf «✅ Completed»:
@@ -277,6 +277,7 @@ die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 | #75 | 14.9.2026 | `943f676` | leer | keiner |
 | #85 | 14.10.2026 | `5c82cc5` | leer | keiner |
 | #91 | 13.11.2026 | `6c0c7f4` | leer | keiner |
+| #92 | 13.11.2026 | `66db6f1` | leer | keiner |
 
 Wer «geprüft und sauber» am Befundlos-Kommentar festmacht, findet ihn hier
 über neun Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
@@ -305,8 +306,8 @@ Mitgewandert ist die Darstellung: Der Kommentar steckt jetzt in einem
 Zweimal hat die Form damit in zwei Monaten gewechselt. Wer seine Prüfung an
 einen Text bindet statt an ein Feld, baut sie jedes Mal neu.
 
-Was die vier Messungen **nicht** hergeben: dass der Kommentar abgeschafft
-wäre. Vier Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
+Was die fünf Messungen **nicht** hergeben: dass der Kommentar abgeschafft
+wäre. Fünf Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
 auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 
 **Die Laufzeit taugt nicht als Wartezeit.** Derselbe Statuskommentar, von
@@ -319,6 +320,7 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 | #75 | 14.9.2026 | 12:45:11 | 12:45:58 | 47 s |
 | #85 | 14.10.2026 | 06:52:58 | 06:53:56 | 58 s |
 | #91 | 13.11.2026 | 14:01:54 | 14:02:53 | 59 s |
+| #92 | 13.11.2026 | 16:26:07 | 16:27:03 | 56 s |
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
 etwas geändert hätte. Eine Regel wie «vier Minuten warten, dann ist es
@@ -327,9 +329,12 @@ sicher» ist daraus nicht zu bauen; gelesen wird der Status, nicht die Uhr.
 Dass die Tabelle **in place** aktualisiert wird, macht beide Messungen erst
 möglich und eine einzelne Abfrage zugleich wertlos: `created_at` bleibt
 stehen, nur `updated_at` springt. Wer einmal abfragt, sieht einen Zustand und
-weiss nicht, welchen.
+weiss nicht, welchen. Auf #92 ist der Wechsel einmal im Lauf mitverfolgt: Im
+Marker stand um 16:26:07 noch `"status":"running"` mit
+`has_any_findings: null`, um 16:27:03 dann `"completed"` mit `false` — gleiche
+Kommentar-ID, unverändertes `created_at`.
 
-**Und viermal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+**Und fünfmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
 Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
 Erscheinen bis zum Urteil:
 
@@ -339,10 +344,13 @@ Erscheinen bis zum Urteil:
 | #75 | 12:45:05 | 12:45:11 | 12:45:58 | 53 s |
 | #85 | 06:52:49 | 06:52:58 | 06:53:56 | 1 min 07 s |
 | #91 | 14:01:45 | 14:01:54 | 14:02:53 | 1 min 08 s |
+| #92 | 16:25:55 | 16:26:07 | 16:27:03 | 1 min 08 s |
 
 Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
-wurde. Auf #75, #85 und #91 war der Kommentar zum Merge-Zeitpunkt noch gar
-nicht da — sechs, neun und neun Sekunden fehlten ihm.
+wurde. Auf #75, #85, #91 und #92 war der Kommentar zum Merge-Zeitpunkt noch
+gar nicht da — sechs, neun, neun und zwölf Sekunden fehlten ihm. Auf #92 lag
+der Merge sogar sieben Sekunden vor dem *Start* des Laufs: Es gab zum
+Merge-Zeitpunkt nichts anzusehen, auch nicht für den, der hinsieht.
 
 Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
 Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
@@ -351,8 +359,8 @@ DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
 falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
 den geschlossenen PR wäre er in `main` liegengeblieben.
 
-Für #75, #85 und #91 ist **nicht** bekannt, ob es etwas zu finden gab; alle
-drei Läufe blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+Für #75, #85, #91 und #92 ist **nicht** bekannt, ob es etwas zu finden gab;
+alle vier Läufe blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
 dieselbe.
 
 Zwei Handgriffe daraus:
