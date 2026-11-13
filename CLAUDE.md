@@ -259,14 +259,14 @@ wurde, die dort nicht steht.
 Am 23.9.2026 nahm Commit `3371e72` den Codex-Abschnitt aus dieser Datei, mit
 der Begründung, das Repo trage keinen `codex-gate`-Workflow. Für den *Gate*
 stimmt das und bleibt so. Für den *Review-Bot* nicht: Der läuft hier weiter,
-zuletzt gemessen am 14.10.2026 auf PR #85 — Statuskommentar des
+zuletzt gemessen am 13.11.2026 auf PR #91 — Statuskommentar des
 `chatgpt-codex-connector[bot]`, Auslöser «Draft marked ready», Commit
-`5c82cc5`. Was hier steht, ist deshalb nicht der alte Abschnitt, sondern das,
+`6c0c7f4`. Was hier steht, ist deshalb nicht der alte Abschnitt, sondern das,
 was seither an ihm gemessen wurde.
 
 **Die Befundlos-Meldung ist weg, die Statustabelle nicht.** Einen Lauf ohne
 Befund meldete Codex früher als gewöhnlichen Issue-Kommentar («Codex Review:
-Didn't find any major issues»). Auf den drei befundlosen Läufen dieses Repos,
+Didn't find any major issues»). Auf den vier befundlosen Läufen dieses Repos,
 die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 *Review | Status | Commit | Review trigger* hinter dem Marker
 `<!-- codex-pull-request-review-summary -->`, auf «✅ Completed»:
@@ -276,15 +276,37 @@ die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 | #74 | 9.9.2026 | `4f29cbc` | leer | keiner |
 | #75 | 14.9.2026 | `943f676` | leer | keiner |
 | #85 | 14.10.2026 | `5c82cc5` | leer | keiner |
+| #91 | 13.11.2026 | `6c0c7f4` | leer | keiner |
 
 Wer «geprüft und sauber» am Befundlos-Kommentar festmacht, findet ihn hier
-über fünf Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
+über neun Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
 Belastbar ist das Paar: Tabelle auf «Completed» **und** `get_reviews` leer.
 «Completed» allein sagt nur, dass ein Lauf stattfand — auf PR #73 stand es
 zur selben Minute wie ein P2-Befund im Review-Objekt.
 
-Was die drei Messungen **nicht** hergeben: dass der Kommentar abgeschafft
-wäre. Drei Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
+**Seit dem 13.11.2026 sagt es ein Marker direkt.** Der Statuskommentar auf
+#91 trägt neben dem bekannten `codex-pull-request-review-summary` einen
+zweiten, maschinenlesbaren:
+
+```
+<!-- codex-review-state:v1 {"code_review":{"commit_sha":"6c0c7f4…",
+     "has_any_findings":false,"has_unresolved_findings":false,
+     "status":"completed"},"security_review":{…}} -->
+```
+
+Damit steht «kein Befund» als Feld da und nicht länger als abwesender
+Kommentar. Der Marker ist **nicht rückwirkend**: Derselbe Kommentar auf #85,
+am 13.11. erneut abgefragt, führt ihn nach wie vor nicht — er wird beim
+Schreiben gesetzt, nicht beim Ausliefern. Wer ihn erwartet, muss also mit
+Kommentaren ohne ihn rechnen; das Paar oben bleibt der Rückfall.
+
+Mitgewandert ist die Darstellung: Der Kommentar steckt jetzt in einem
+`<details>` mit der Zusammenfassung «Codex Review Summary: ✅ Completed».
+Zweimal hat die Form damit in zwei Monaten gewechselt. Wer seine Prüfung an
+einen Text bindet statt an ein Feld, baut sie jedes Mal neu.
+
+Was die vier Messungen **nicht** hergeben: dass der Kommentar abgeschafft
+wäre. Vier Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
 auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 
 **Die Laufzeit taugt nicht als Wartezeit.** Derselbe Statuskommentar, von
@@ -296,6 +318,7 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 | #73 | 9.9.2026 | 03:53:11 | 03:56:22 | 3 min 11 s |
 | #75 | 14.9.2026 | 12:45:11 | 12:45:58 | 47 s |
 | #85 | 14.10.2026 | 06:52:58 | 06:53:56 | 58 s |
+| #91 | 13.11.2026 | 14:01:54 | 14:02:53 | 59 s |
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
 etwas geändert hätte. Eine Regel wie «vier Minuten warten, dann ist es
@@ -305,6 +328,40 @@ Dass die Tabelle **in place** aktualisiert wird, macht beide Messungen erst
 möglich und eine einzelne Abfrage zugleich wertlos: `created_at` bleibt
 stehen, nur `updated_at` springt. Wer einmal abfragt, sieht einen Zustand und
 weiss nicht, welchen.
+
+**Und viermal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
+Erscheinen bis zum Urteil:
+
+| PR | Merge | Kommentar erscheint | Urteil steht | Merge vor dem Urteil um |
+|---|---|---|---|---|
+| #73 | 03:54:34 | 03:53:11 | 03:56:22 | 1 min 48 s |
+| #75 | 12:45:05 | 12:45:11 | 12:45:58 | 53 s |
+| #85 | 06:52:49 | 06:52:58 | 06:53:56 | 1 min 07 s |
+| #91 | 14:01:45 | 14:01:54 | 14:02:53 | 1 min 08 s |
+
+Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
+wurde. Auf #75, #85 und #91 war der Kommentar zum Merge-Zeitpunkt noch gar
+nicht da — sechs, neun und neun Sekunden fehlten ihm.
+
+Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
+Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
+war echt und traf genau die Lücke, die der gemergte PR schliessen sollte: Ein
+DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
+falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
+den geschlossenen PR wäre er in `main` liegengeblieben.
+
+Für #75, #85 und #91 ist **nicht** bekannt, ob es etwas zu finden gab; alle
+drei Läufe blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+dieselbe.
+
+Zwei Handgriffe daraus:
+
+- **Vor dem Merge auf den Status sehen, nicht auf die Uhr.** Dieselbe Regel
+  wie oben, mit dem Zusatz, dass sie vorher gilt und nicht nachher: Eine
+  Tabelle auf «Running» ist eine Aufforderung zu warten.
+- **Ein geschlossener PR ist kein Grund, nicht mehr hinzusehen.** Der Lauf
+  läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
 
 ### Wenn zwei Agenten dasselbe tun
 
