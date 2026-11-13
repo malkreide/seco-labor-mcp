@@ -249,5 +249,84 @@ class GithubOutputZeilenTest(unittest.TestCase):
         self.assertEqual(len(zeilen), 2)
 
 
+def suite_mit_fehlern(faelle: list[tuple[str, str]]) -> str:
+    """Testfaelle mit `classname` und Ausgang: `failure`, `error` oder `passed`."""
+    teile = []
+    for i, (klasse, ausgang) in enumerate(faelle):
+        innen = "" if ausgang == "passed" else f'<{ausgang} message="x">x</{ausgang}>'
+        teile.append(f'<testcase classname="{klasse}" name="test_{i}">{innen}</testcase>')
+    failures = sum(a == "failure" for _, a in faelle)
+    errors = sum(a == "error" for _, a in faelle)
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f'<testsuites><testsuite name="pytest" tests="{len(faelle)}" failures="{failures}" '
+        f'errors="{errors}" skipped="0">{"".join(teile)}</testsuite></testsuites>'
+    )
+
+
+class BetroffeneQuellenTest(unittest.TestCase):
+    """Welche Quelle der Issue-Titel nennt.
+
+    Bis 2026-11 stand dort immer unfallstatistik.ch — auch fuer #78, #89 und
+    #90, deren Ursache ein Timeout bei opendata.swiss war.
+    """
+
+    def _quellen(self, xml: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            return clr.betroffene_quellen(write(Path(tmp), xml))
+
+    def test_der_fall_vom_10_11_nennt_die_arbeitsmarktdaten(self):
+        quellen = self._quellen(
+            suite_mit_fehlern(
+                [("tests.test_live.TestLiveAPI", "failure")]
+                + [("tests.test_live.TestLiveUvg", "passed")] * 11
+            )
+        )
+        self.assertEqual(quellen, clr.QUELLEN["TestLiveAPI"])
+        self.assertNotIn("unfallstatistik", quellen)
+
+    def test_beide_klassen_einmal_in_der_reihenfolge_des_reports(self):
+        quellen = self._quellen(
+            suite_mit_fehlern(
+                [
+                    ("tests.test_live.TestLiveUvg", "failure"),
+                    ("tests.test_live.TestLiveAPI", "error"),
+                    ("tests.test_live.TestLiveUvg", "failure"),
+                ]
+            )
+        )
+        self.assertEqual(quellen, f"{clr.QUELLEN['TestLiveUvg']}, {clr.QUELLEN['TestLiveAPI']}")
+
+    def test_eine_neue_klasse_wird_nicht_geraten(self):
+        """Ohne Eintrag erscheint der Klassenname, keine erfundene Quelle."""
+        quellen = self._quellen(suite_mit_fehlern([("tests.test_live.TestLiveNeu", "failure")]))
+        self.assertEqual(quellen, "TestLiveNeu")
+
+    def test_ohne_fehlschlag_keine_quelle(self):
+        quellen = self._quellen(suite_mit_fehlern([("tests.test_live.TestLiveAPI", "passed")]))
+        self.assertEqual(quellen, "")
+
+    def test_ohne_report_keine_quelle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(clr.betroffene_quellen(Path(tmp) / "fehlt.xml"), "")
+
+    def test_die_quelle_geht_ins_github_output(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = write(
+                Path(tmp), suite_mit_fehlern([("tests.test_live.TestLiveAPI", "failure")])
+            )
+            out = Path(tmp) / "gh-output"
+            out.write_text("", encoding="utf-8")
+            os.environ["GITHUB_OUTPUT"] = str(out)
+            try:
+                clr.main([str(report)])
+            finally:
+                del os.environ["GITHUB_OUTPUT"]
+            zeilen = out.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"quellen={clr.QUELLEN['TestLiveAPI']}", zeilen)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-# Geplante Live-Tests gegen unfallstatistik.ch (DRIFT-005).
+# Geplante Live-Tests gegen die Datenquellen: unfallstatistik.ch, opendata.swiss, BFS, Kantone (DRIFT-005).
 #
 # Die Unit-Tests laufen gegen aufgezeichnete bzw. gemockte Antworten und
 # koennen deshalb nicht bemerken, wenn die Quelle ihr Format aendert. Die
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   live:
-    name: Live-Suite gegen unfallstatistik.ch
+    name: Live-Suite gegen die Datenquellen
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -78,15 +78,21 @@ jobs:
           LIVE_STATE: ${{ steps.verdict.outputs.state }}
           LIVE_REASON: ${{ steps.verdict.outputs.reason }}
           LIVE_TAIL: ${{ steps.verdict.outputs.tail }}
+          LIVE_QUELLEN: ${{ steps.verdict.outputs.quellen }}
         with:
           script: |
             const state = process.env.LIVE_STATE;
             const reason = process.env.LIVE_REASON || '';
             const tail = process.env.LIVE_TAIL || '(keine Ausgabe)';
+            // Welche Quelle betroffen ist, sagt `classify_live_run.py` aus den
+            // Klassen der gefallenen Tests. Bis 2026-11 stand hier fest
+            // «unfallstatistik.ch», auch wenn opendata.swiss gemeint war.
+            const quellen = process.env.LIVE_QUELLEN || 'Quelle unbestimmt';
             // Stabiles Praefix: Damit ein zweiter roter Lauf den bestehenden
             // Thread verlaengert statt einen zweiten aufzumachen. Zehn Issues
-            // zur selben Sache liest niemand.
-            const PREFIX = 'Live-Tests gegen unfallstatistik.ch rot';
+            // zur selben Sache liest niemand. Die Quelle steht dahinter und
+            // gehoert deshalb nicht ins Praefix.
+            const PREFIX = 'Live-Tests rot';
             const LABEL = 'upstream';
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
                         `/actions/runs/${context.runId}`;
@@ -105,7 +111,7 @@ jobs:
 
             if (state === 'unknown') {
               // Weder oeffnen noch schliessen. Der Lauf hat nichts ueber den
-              // Vertrag mit unfallstatistik.ch festgestellt, und ein Issue, das auf so
+              // Vertrag mit der Quelle festgestellt, und ein Issue, das auf so
               // einen Lauf hin zugeht, behauptet einen Vergleich, den es nicht
               // gab. Sichtbar wird es ueber den roten Job.
               core.warning(`Live-Suite nicht ausgewertet: ${reason}. Am Issue wurde nichts geaendert.`);
@@ -114,7 +120,7 @@ jobs:
 
             if (state === 'finding') {
               const body = [
-                'Die geplante Live-Suite gegen `unfallstatistik.ch` ist rot.',
+                `Die geplante Live-Suite ist rot. Betroffen: ${quellen}.`,
                 '',
                 `Lauf: ${run}`,
                 `Einordnung: ${reason}`,
@@ -155,7 +161,7 @@ jobs:
                   if (e.status !== 422) throw e;  // 422 = existiert bereits
                 }
                 await github.rest.issues.create({
-                  ...context.repo, title: `${PREFIX} (${heute})`, body, labels: [LABEL],
+                  ...context.repo, title: `${PREFIX}: ${quellen} (${heute})`, body, labels: [LABEL],
                 });
               }
               return;
