@@ -10,6 +10,7 @@ CI excludes this file via `pytest -m "not live"`.
 """
 
 import functools
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,9 @@ import pytest
 from seco_labor_mcp import kantone, sources, uvg
 from seco_labor_mcp.server import (
     CANTON_CODES,
+    JUGEND_KANTONE,
     DatasetSearchInput,
+    ResponseFormat,
     UpstreamSchemaError,
     UpstreamUnreachableError,
     YouthUnemploymentInput,
@@ -373,13 +376,44 @@ class TestLiveAPI:
         assert all(suchende[j] > registriert[j] for j in gemeinsam)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("kanton", JUGEND_KANTONE)
     @_ohne_antwort_kein_befund
-    async def test_youth_unemployment_live(self):
-        """Live test for youth unemployment."""
-        inp = YouthUnemploymentInput(canton="ZH")
-        result = await seco_get_youth_unemployment(inp)
-        assert isinstance(result, str)
-        assert len(result) > 100
+    async def test_das_jugendwerkzeug_liefert_echte_werte(self, kanton):
+        """Die beiden Kantone, fuer die das Werkzeug wirklich abruft.
+
+        Hier stand bis 2026-11 ein Test mit `canton="ZH"`. Zuerich fuehrt keine
+        Jugendreihe; das Werkzeug antwortet dort mit einer festen Absage, ohne
+        die Quelle zu fragen. Der Test bestand deshalb auch mit totem Proxy
+        (gemessen am 13.11.2026) — ein Live-Test, der nichts misst. Die Absage
+        fuer ZH pruefen die Unit-Tests.
+
+        Was nur live auffaellt: TG liest die Altersklasse ueber
+        `.get("15-24 Jahre", {})`. Benennt der Kanton sie um, kommen still
+        leere Werte heraus statt eines Fehlers. ZG muss die Quote liefern, die
+        es als einziger Kanton fuehrt.
+        """
+        antwort = await seco_get_youth_unemployment(
+            YouthUnemploymentInput(canton=kanton, response_format=ResponseFormat.JSON)
+        )
+        assert not antwort.startswith("Error"), antwort
+        daten = json.loads(antwort)
+        assert daten["canton"] == kanton
+        assert daten["data_url"].startswith("https://"), "der Wert nennt seine Datei"
+        if kanton == "TG":
+            assert daten["measure"] == "count"
+            for kennzahl, wert in daten["youth_15_24"].items():
+                assert wert is not None, (
+                    f"{kennzahl}: keine Altersklasse «15-24 Jahre» in {daten['period']} "
+                    "— umbenannt?"
+                )
+                assert 0 < wert < daten["canton_total"][kennzahl], (
+                    f"{kennzahl}: {wert} Junge bei {daten['canton_total'][kennzahl]} gesamt"
+                )
+        else:
+            assert daten["measure"] == "rate_pct"
+            quote = daten["youth_unemployment_rate_pct"]
+            assert quote is not None, f"keine Jugendarbeitslosenquote in {daten['period']}"
+            assert 0 < quote < 100, f"{quote} ist keine Quote in Prozent"
 
     @pytest.mark.asyncio
     async def test_cantons_list_live(self):
