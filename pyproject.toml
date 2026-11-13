@@ -66,7 +66,7 @@ dependencies = [
     # Jahrestabellen fehlten sechs der 53 Zeilen oder trugen einen
     # abgeschnittenen Code -- bei aufgehender Summenprobe. Verifiziert mit
     # 6.20.0 und 6.20.1 gegen Ts26.pdf.
-    "pypdf>=6.20.0,<6.21",
+    "pypdf>=6.20.0,<6.22",
     # openpyxl fuer die BFS-Jahrestabelle. Die Reihe der registrierten
     # Arbeitslosen und Stellensuchenden gibt es nur als XLSX -- weder CSV noch
     # SDMX, geprueft am 2026-08-14. Der Parser haengt an der Zellenlesung von
