@@ -306,6 +306,39 @@ möglich und eine einzelne Abfrage zugleich wertlos: `created_at` bleibt
 stehen, nur `updated_at` springt. Wer einmal abfragt, sieht einen Zustand und
 weiss nicht, welchen.
 
+**Und dreimal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
+Erscheinen bis zum Urteil:
+
+| PR | Merge | Kommentar erscheint | Urteil steht | Merge vor dem Urteil um |
+|---|---|---|---|---|
+| #73 | 03:54:34 | 03:53:11 | 03:56:22 | 1 min 48 s |
+| #75 | 12:45:05 | 12:45:11 | 12:45:58 | 53 s |
+| #85 | 06:52:49 | 06:52:58 | 06:53:56 | 1 min 07 s |
+
+Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
+wurde. Auf #75 und #85 war der Kommentar zum Merge-Zeitpunkt noch gar nicht
+da — sechs beziehungsweise neun Sekunden fehlten ihm.
+
+Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
+Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
+war echt und traf genau die Lücke, die der gemergte PR schliessen sollte: Ein
+DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
+falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
+den geschlossenen PR wäre er in `main` liegengeblieben.
+
+Für #75 und #85 ist **nicht** bekannt, ob es etwas zu finden gab; beide Läufe
+blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+dieselbe.
+
+Zwei Handgriffe daraus:
+
+- **Vor dem Merge auf den Status sehen, nicht auf die Uhr.** Dieselbe Regel
+  wie oben, mit dem Zusatz, dass sie vorher gilt und nicht nachher: Eine
+  Tabelle auf «Running» ist eine Aufforderung zu warten.
+- **Ein geschlossener PR ist kein Grund, nicht mehr hinzusehen.** Der Lauf
+  läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
+
 ### Wenn zwei Agenten dasselbe tun
 
 Vor dem Anlegen eines Branches mit vorgegebenem Namen prüfen, ob es ihn schon
