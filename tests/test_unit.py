@@ -5,7 +5,9 @@ Run: pytest tests/test_unit.py -v        # default in CI
 Live tests live in tests/test_live.py and are skipped unless --run-live.
 """
 
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -58,6 +60,10 @@ def assert_rejects(build, error_type: str, field: str) -> None:
     with pytest.raises(ValidationError) as excinfo:
         build()
     assert [(e["type"], e["loc"]) for e in excinfo.value.errors()] == [(error_type, (field,))]
+
+
+async def _sofort(_sekunden: float) -> None:
+    """Ersatz fuer den Modul-Alias `_sleep`: die Leiter ohne Wartezeit."""
 
 
 # ---------------------------------------------------------------------------
@@ -329,27 +335,39 @@ class TestSecoSearchDatasets:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_search_protocol_error_5xx_is_raised(self):
+    async def test_search_protocol_error_5xx_is_raised(self, monkeypatch):
         """OBS-001: 5xx is a protocol-level failure and must propagate as an
-        exception so the MCP layer reports isError, not as a success-string."""
-        respx.get(f"{CKAN_BASE}/package_search").mock(
+        exception so the MCP layer reports isError, not as a success-string.
+
+        Seit 2026-11 erst nach der Leiter: ein 5xx wird wiederholt, und wer
+        nach allen Versuchen noch keinen Erfolg hat, bekommt
+        `UpstreamUnreachableError` statt des rohen `HTTPStatusError`.
+        """
+        monkeypatch.setattr(_server_mod, "_sleep", _sofort)
+        route = respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(503, text="Service Unavailable")
         )
         inp = DatasetSearchInput(query="test")
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(_server_mod.UpstreamUnreachableError):
             await seco_search_datasets(inp)
+        assert route.call_count == 4, "ein Versuch plus drei Retries"
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_search_execution_error_429_returns_string(self):
         """OBS-001: 429 is an execution error — caller can back off and retry,
-        so we return a user-facing string instead of raising."""
-        respx.get(f"{CKAN_BASE}/package_search").mock(
+        so we return a user-facing string instead of raising.
+
+        Und zwar nach genau einem Versuch: Die CKAN-Leiter wiederholt 429
+        bewusst nicht, sonst bekäme das Modell den Hinweis nie zu sehen.
+        """
+        route = respx.get(f"{CKAN_BASE}/package_search").mock(
             return_value=httpx.Response(429, text="Too Many Requests")
         )
         inp = DatasetSearchInput(query="test")
         result = await seco_search_datasets(inp)
         assert "Rate limit" in result
+        assert route.call_count == 1
 
 
 class TestSecoGetDataset:
@@ -456,13 +474,14 @@ class TestUnemploymentOverview:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_overview_national(self):
+    async def test_overview_national(self, monkeypatch):
         """Die Uebersicht liest jetzt die gepinnte Tabelle, nicht die Suche.
 
         Die echten Zahlen und die Form der Antwort pruefen die
         Aufzeichnungstests; hier geht es nur darum, dass der Weg ueber
         `package_show` auf die gepinnte Kennung fuehrt.
         """
+        monkeypatch.setattr(_server_mod, "_sleep", _sofort)  # der 500 wird wiederholt
         route = respx.get(url__startswith=f"{CKAN_BASE}/package_show").mock(
             return_value=httpx.Response(500)
         )
@@ -798,3 +817,111 @@ class TestBytesFetchRetry:
         with pytest.raises(_server_mod.UrlNotAllowedError):
             await _server_mod._fetch_bytes_with_retry("https://169.254.169.254/x.xlsx")
         assert calls == 1
+
+
+class TestCkanRetry:
+    """Wiederholung fuer die CKAN-API von opendata.swiss (`_ckan_get`).
+
+    Gegen den Fall vom 8. und 10.11.2026: je ein `package_show`, der schwieg,
+    bis nach 30 s `httpx.ReadTimeout` kam. Der Haenger hier ist echt — die
+    Seitenwirkung wartet wirklich, und abgebrochen wird sie von der
+    Versuchsgrenze, nicht von einer Fake-Uhr. Die Grenze steht fuer den Test
+    auf 50 ms statt auf 10 s; das Prinzip ist dasselbe.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _schnell(self, monkeypatch):
+        monkeypatch.setattr(_server_mod, "_sleep", _sofort)
+        monkeypatch.setattr(_server_mod, "CKAN_VERSUCH_TIMEOUT", 0.05)
+
+    @staticmethod
+    def _erst_haengen(antwort: httpx.Response, haenger: int = 1):
+        """Die ersten `haenger` Aufrufe schweigen, danach kommt `antwort`.
+
+        Gezaehlt wird hier und nicht mit `route.call_count`: respx bucht einen
+        Aufruf erst, wenn seine Antwort fertig ist. Ein abgebrochener Haenger
+        taucht dort nie auf — gemessen, nicht vermutet: der erste Entwurf
+        dieses Tests las 1 statt 2 und 0 statt 4.
+        """
+        aufrufe: list[int] = []
+
+        async def seite(_request):
+            aufrufe.append(1)
+            if len(aufrufe) <= haenger:
+                await asyncio.sleep(30)
+            return antwort
+
+        return seite, aufrufe
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_ein_haengender_versuch_wird_abgebrochen_und_wiederholt(self):
+        seite, aufrufe = self._erst_haengen(httpx.Response(200, json=MOCK_CKAN_DATASET_RESPONSE))
+        respx.get(f"{CKAN_BASE}/package_show").mock(side_effect=seite)
+        start = time.monotonic()
+        paket = await _server_mod._ckan_get_dataset("monatliche-arbeitslosenzahlen-2024")
+        assert paket["success"] is True
+        assert len(aufrufe) == 2
+        assert time.monotonic() - start < 5, "der Haenger wurde ausgesessen statt abgebrochen"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_schweigt_die_quelle_ganz_ist_es_ein_ausfall(self):
+        """Jeder Versuch haengt: vier Versuche, dann der benannte Ausfall."""
+        seite, aufrufe = self._erst_haengen(httpx.Response(200, json={}), haenger=99)
+        respx.get(f"{CKAN_BASE}/package_search").mock(side_effect=seite)
+        with pytest.raises(_server_mod.UpstreamUnreachableError) as exc:
+            await _server_mod._ckan_search("Arbeitslosigkeit")
+        assert len(aufrufe) == 4
+        assert "keine Antwort innert" in str(exc.value)
+        assert "package_search" in str(exc.value), "die Meldung nennt, wer schwieg"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_5xx_dann_erfolg(self):
+        route = respx.get(f"{CKAN_BASE}/package_show").mock(
+            side_effect=[
+                httpx.Response(502),
+                httpx.Response(200, json=MOCK_CKAN_DATASET_RESPONSE),
+            ]
+        )
+        paket = await _server_mod._ckan_get_dataset("monatliche-arbeitslosenzahlen-2024")
+        assert paket["result"]["id"] == "abc123"
+        assert route.call_count == 2
+
+    @pytest.mark.asyncio
+    @respx.mock
+    @pytest.mark.parametrize("status", [403, 404, 429])
+    async def test_eine_antwort_wird_nicht_wiederholt(self, status):
+        """403, 404 und 429 sind Antworten der Quelle, kein Ausfall.
+
+        Wer sie wiederholt, liest dieselbe Absage noch dreimal — und beim 429
+        bekaeme das Modell den Hinweis zum Zuwarten nie zu sehen.
+        """
+        route = respx.get(f"{CKAN_BASE}/package_show").mock(return_value=httpx.Response(status))
+        with pytest.raises(httpx.HTTPStatusError):
+            await _server_mod._ckan_get_dataset("x")
+        assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_downloads_behalten_ihre_frist(self, monkeypatch):
+        """Die Versuchsgrenze gilt nur fuer die CKAN-API.
+
+        Eine Datei darf laenger brauchen als eine Metadaten-Antwort; der
+        Download-Pfad wartet weiter bis ans Budget, wie vor dem Umbau.
+        """
+
+        async def _erlauben(_url: str) -> None:
+            return None
+
+        monkeypatch.setattr(_server_mod, "_validate_external_url", _erlauben)
+        url = "https://example.test/langsam.xlsx"
+
+        async def langsam(_request):
+            await asyncio.sleep(0.2)
+            return httpx.Response(200, content=b"nutzlast")
+
+        route = respx.get(url).mock(side_effect=langsam)
+        assert await _server_mod._fetch_bytes_with_retry(url) == b"nutzlast"
+        assert route.call_count == 1

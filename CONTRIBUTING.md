@@ -47,13 +47,13 @@ Phase 1 tools must work without any API key. Authenticated sources go in Phase 2
 **Cadence:** daily at 03:17 UTC, plus on demand via *Actions → Live tests (nightly) → Run
 workflow*. See [`.github/workflows/live.yml`](.github/workflows/live.yml).
 
-**Who sees it:** A red run opens an issue labelled `upstream` and the stable title “Live-Tests gegen unfallstatistik.ch rot (<Datum>)”. A second red run recognises the open issue by its title prefix and appends to that same thread rather than opening a second one. Once the suite is green again, the issue closes itself.
+**Who sees it:** A red run with a `finding` opens an issue labelled `upstream`, titled “Live-Tests rot: <affected source> (<Datum>)” — the source is derived from the class of the failing tests (`TestLiveUvg` → unfallstatistik.ch, `TestLiveAPI` → labour-market data from opendata.swiss, BFS and the cantons). A second red run recognises the open issue by the stable prefix “Live-Tests rot” and appends to that same thread rather than opening a second one. Once the suite is green again, the issue closes itself.
 
 **Three answers, not two.** `scripts/classify_live_run.py` reads the JUnit XML rather than
 the exit code and separates `clear` (ran, green), `finding` (ran, something
 fell) and `unknown` (did not run — install failed, nothing collected,
-everything skipped). An `unknown` never closes an issue: closing would claim a
-comparison that never happened.
+everything skipped, or a source that did not answer). An `unknown` never
+closes an issue: closing would claim a comparison that never happened.
 
 **A red live run does not necessarily mean *our* bug.** It means the contract
 with the source has changed, or the source is down. Both belong seen; only the

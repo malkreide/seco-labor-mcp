@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Geändert
 
+- **Ein Aussetzer von opendata.swiss ist kein Befund mehr — und meist gar
+  kein Fehler.** Die Abrufe an der CKAN-API (`package_show`,
+  `package_search`) machten genau einen Versuch, während die Dateien daneben
+  seit August die Leiter 2s/4s/8s hatten. In vier Live-Läufen (21.9., 11.10.,
+  8.11. und 10.11.2026) hing so je ein Abruf 30 s bis zum `ReadTimeout`; jedes
+  Mal ging ein Issue auf, und jedes Mal war die Nacht darauf grün. Normal
+  braucht `package_show` 0,6 bis 1,3 s (gemessen an fünf Läufen). Für
+  Nutzende hiess das: Jede Kantonsabfrage beginnt mit diesem Abruf und
+  scheiterte an einem Aussetzer von Sekunden.
+
+  Jetzt laufen beide Abrufe über dieselbe Leiter, mit einer Grenze von 10 s
+  je Versuch. Die Grenze ist der eigentliche Fix: Ohne sie verbraucht ein
+  schweigender Versuch das ganze Budget von 25 s, und zum zweiten Versuch
+  kommt es nie — die bestehende Leiter allein hätte hier nichts geändert.
+  Wiederholt werden «keine Antwort» und 5xx; ein 429 bleibt eine Antwort an
+  das Modell (OBS-001), ein 403 oder 404 ebenso. Downloads behalten ihre
+  bisherige Frist.
+
+  Antwortet die Quelle trotzdem nicht, überspringt sich der Live-Test mit
+  der Marke `QUELLE-AUS:` (`_ohne_antwort_kein_befund`), wie es die
+  UVG-Tests seit #72 tun: `unknown` statt `finding`, kein Issue. Der
+  Issue-Titel lautet jetzt «Live-Tests rot: <Quelle> (<Datum>)» und nennt die
+  Quelle aus der Klasse der gefallenen Tests — bisher stand dort immer
+  unfallstatistik.ch, auch bei den sechs Issues, deren Ursache bei
+  opendata.swiss oder beim BFS lag.
+
 - **`seco_get_uvg_by_branch` liefert keine Zeilen mehr, wenn die Summenprobe
   nicht hält.** Bisher stand die Probe nur als `totals_check` neben den
   Zeilen. Vom 2026-10-10 bis zum Fix weiter unten verfehlte 2.4 BUV das

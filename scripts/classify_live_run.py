@@ -52,6 +52,11 @@ Suite gruen war. Sonst schliesst ein halber Ausfall ein echtes offenes Issue.
 Die Marke ist unsere eigene und wird hier gesetzt, nicht aus fremdem Text
 geraten. Ein Skip ohne sie bleibt, was er war: eine Entscheidung im Test.
 
+Bis 2026-11 galt das nur fuer unfallstatistik.ch. Die Arbeitsmarkt-Tests
+buchten einen `httpx.ReadTimeout` von opendata.swiss weiter als `finding` —
+viermal, jedes Mal in einem Issue gemeldet und in der Nacht darauf gruen. Sie
+setzen die Marke jetzt ebenfalls (`_ohne_antwort_kein_befund`).
+
 DIE QUELLE IST DAS JUNIT-XML, NICHT DER EXIT-CODE
 -------------------------------------------------
 Der Exit-Code von pytest sagt 0 fuer «alles gruen» und fuer «alles
@@ -86,6 +91,16 @@ UNKNOWN = "unknown"
 # `finding`, ohne dass irgendetwas rot wird.
 QUELLE_AUS_MARKE = "QUELLE-AUS:"
 
+# Welche Quelle ein Live-Test misst, steht an seiner Klasse in
+# `tests/test_live.py`. Bis 2026-11 nannte der Workflow in jedem Issue-Titel
+# unfallstatistik.ch — auch fuer die sechs Issues, deren Ursache bei
+# opendata.swiss oder beim BFS lag (#43, #50, #60, #78, #89, #90).
+# Wer den Titel las, suchte am falschen Ort.
+QUELLEN = {
+    "TestLiveUvg": "unfallstatistik.ch",
+    "TestLiveAPI": "Arbeitsmarktdaten (opendata.swiss, BFS, Kantone)",
+}
+
 
 def _quelle_aus(suites: list[ET.Element]) -> int:
     """Wie viele Tests haben sich uebersprungen, weil die Quelle stumm blieb?
@@ -102,6 +117,28 @@ def _quelle_aus(suites: list[ET.Element]) -> int:
         for skipped in suite.iter("skipped")
         if (skipped.get("message") or "").lstrip().startswith(QUELLE_AUS_MARKE)
     )
+
+
+def betroffene_quellen(report: Path) -> str:
+    """Die Quellen der gefallenen Tests, fuer Titel und Text des Issues.
+
+    Leer, wenn nichts gefallen ist oder der Report fehlt — dann gibt es kein
+    Issue, das einen Titel braeuchte. Eine Klasse ohne Eintrag in `QUELLEN`
+    erscheint unter ihrem eigenen Namen statt unter einer geratenen Quelle.
+    """
+    try:
+        root = ET.parse(report).getroot()
+    except (ET.ParseError, OSError):
+        return ""
+    namen: list[str] = []
+    for fall in root.iter("testcase"):
+        if fall.find("failure") is None and fall.find("error") is None:
+            continue
+        klasse = (fall.get("classname") or "").rsplit(".", 1)[-1]
+        name = QUELLEN.get(klasse, klasse or "unbekannte Quelle")
+        if name not in namen:
+            namen.append(name)
+    return ", ".join(namen)
 
 
 def classify(report: Path, pytest_exit: int | None = None) -> tuple[str, str]:
@@ -151,7 +188,7 @@ def classify(report: Path, pytest_exit: int | None = None) -> tuple[str, str]:
     if stumm:
         return (
             UNKNOWN,
-            f"{stumm} von {tests} Test(s) haben unfallstatistik.ch nicht erreicht — "
+            f"{stumm} von {tests} Test(s) haben ihre Quelle nicht erreicht — "
             "ueber den Vertrag mit der Quelle ist damit nichts festgestellt, "
             "weder im Guten noch im Schlechten",
         )
@@ -172,8 +209,11 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     state, reason = classify(args.report, args.pytest_exit)
+    quellen = betroffene_quellen(args.report)
     print(f"state={state}")
     print(f"reason={reason}")
+    if quellen:
+        print(f"quellen={quellen}")
 
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
@@ -185,6 +225,10 @@ def main(argv: list[str] | None = None) -> int:
         with open(out, "a", encoding="utf-8") as fh:
             fh.write(f"state={state}\n")
             fh.write(f"reason={flat}\n")
+            # Nur wenn etwas gefallen ist: ohne Befund kein Issue, also auch
+            # kein Titel. Ebenfalls auf eine Zeile gebracht, aus demselben Grund.
+            if quellen:
+                fh.write(f"quellen={' '.join(quellen.split())}\n")
     # Immer 0: Ueber rot oder gruen entscheidet der Workflow.
     return 0
 

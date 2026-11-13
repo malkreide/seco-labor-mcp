@@ -9,16 +9,20 @@ By default they are skipped (see conftest.py); run them explicitly with:
 CI excludes this file via `pytest -m "not live"`.
 """
 
+import functools
 import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from seco_labor_mcp import kantone, sources, uvg
 from seco_labor_mcp.server import (
     CANTON_CODES,
     DatasetSearchInput,
+    UpstreamSchemaError,
+    UpstreamUnreachableError,
     YouthUnemploymentInput,
     _bfs_jahresreihe,
     _ckan_get_dataset,
@@ -116,11 +120,119 @@ class TestQuelleMussGeantwortetHaben:
             pytest.fail(f"gesundes Envelope uebersprungen: {exc}")
 
 
+def _ohne_antwort_kein_befund(test):
+    """Dasselbe fuer die Arbeitsmarkt-Pfade, die keinen Envelope liefern.
+
+    `_quelle_muss_geantwortet_haben` liest `degraded_kind` aus dem Envelope der
+    UVG-Werkzeuge. Die Tests in `TestLiveAPI` rufen die Abrufwege direkt auf,
+    und dort kommt ein Ausfall als Ausnahme an. Bis 2026-11 war das ein roher
+    `httpx.ReadTimeout` von opendata.swiss, gebucht als `finding`, mit Issue:
+    am 21.9. (#78), am 11.10. (in #83), am 8.11. (#89) und am 10.11.2026
+    (#90), jedes Mal in der Nacht darauf wieder gruen. Gemessen war die
+    Erreichbarkeit der Quelle, nicht der Vertrag mit ihr.
+
+    Uebersprungen wird nur, was keine Antwort ist: `UpstreamUnreachableError`
+    (alle Versuche ohne Antwort oder mit 5xx) und ein Netz- oder Zeitfehler.
+    Ein `HTTPStatusError` ist eine Antwort — ein 403 oder 404 auf eine gepinnte
+    Kennung ist genau der Befund, fuer den diese Suite existiert.
+    """
+
+    @functools.wraps(test)
+    async def lauf(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await test(*args, **kwargs)
+        except (UpstreamUnreachableError, httpx.TimeoutException, httpx.NetworkError) as exc:
+            pytest.skip(f"{QUELLE_AUS_MARKE} {type(exc).__name__}: {exc}")
+
+    return lauf
+
+
+class TestOhneAntwortKeinBefund:
+    """Der Waechter fuer `TestLiveAPI` — wie der erste ohne `live`-Marke.
+
+    Er entscheidet mit, ob ein roter Live-Lauf ein Issue erzeugt; die CI muss
+    ihn deshalb fahren, nicht erst der naechtliche Lauf.
+    """
+
+    @staticmethod
+    def _test_der(fehler: Exception):
+        @_ohne_antwort_kein_befund
+        async def probe() -> str:
+            raise fehler
+
+        return probe
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fehler",
+        [
+            UpstreamUnreachableError("package_show nach 4 Versuch(en) nicht erreichbar"),
+            httpx.ReadTimeout(""),
+            httpx.ConnectError(""),
+        ],
+        ids=["alle-versuche-verbraucht", "read-timeout", "connect-error"],
+    )
+    async def test_keine_antwort_wird_uebersprungen(self, fehler):
+        with pytest.raises(pytest.skip.Exception) as exc:
+            await self._test_der(fehler)()
+        assert str(exc.value).startswith(QUELLE_AUS_MARKE), (
+            "ohne die Marke findet der Reporter den Ausfall nicht und bucht wieder `finding`"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [403, 404])
+    async def test_eine_antwort_faellt_durch(self, status):
+        """Der wichtige Fall: Hier hat die Quelle geantwortet.
+
+        Der Skip wird abgefangen und in einen Fehlschlag verwandelt — ein
+        uebersprungener Test meldet nichts, auch nicht, dass er hier haette
+        fallen muessen (dieselbe Lehre wie in `test_unlesbare_antwort_faellt_durch`).
+        """
+        anfrage = httpx.Request("GET", "https://opendata.swiss/api/3/action/package_show")
+        fehler = httpx.HTTPStatusError(
+            "Absage", request=anfrage, response=httpx.Response(status, request=anfrage)
+        )
+        try:
+            await self._test_der(fehler)()
+        except pytest.skip.Exception as exc:  # noqa: PT017
+            pytest.fail(f"uebersprungen statt gefallen — der Befund verschwindet still: {exc}")
+        except httpx.HTTPStatusError:
+            return
+        pytest.fail("weder uebersprungen noch gefallen: der Waechter laesst alles durch")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fehler",
+        [AssertionError("Kennzahl fehlt"), UpstreamSchemaError("keine CSV mehr")],
+        ids=["assertion", "schema"],
+    )
+    async def test_ein_befund_bleibt_ein_befund(self, fehler):
+        try:
+            await self._test_der(fehler)()
+        except pytest.skip.Exception as exc:  # noqa: PT017
+            pytest.fail(f"Befund als Ausfall uebersprungen: {exc}")
+        except type(fehler):
+            return
+        pytest.fail("der Befund kam nicht an")
+
+    @pytest.mark.asyncio
+    async def test_ein_erfolg_geht_durch(self):
+        @_ohne_antwort_kein_befund
+        async def probe() -> str:
+            return "gruen"
+
+        try:
+            assert await probe() == "gruen"
+        except pytest.skip.Exception as exc:  # noqa: PT017
+            pytest.fail(f"Erfolg uebersprungen: {exc}")
+
+
 @pytest.mark.live
 class TestLiveAPI:
     """Live API tests – require internet connection. Skipped in CI."""
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_ckan_search_live(self):
         """Test real CKAN search against opendata.swiss."""
         inp = DatasetSearchInput(query="Arbeitslosigkeit Kantone", limit=3)
@@ -131,6 +243,7 @@ class TestLiveAPI:
         )
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_die_gepinnte_kennung_existiert_noch(self):
         """Der Mechanismus, der den letzten Ausfall gemeldet hätte.
 
@@ -153,6 +266,7 @@ class TestLiveAPI:
             )
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_die_deutsche_mappe_liegt_noch_im_datensatz(self):
         """Der Datensatz fuehrt die Tabelle deutsch und franzoesisch.
 
@@ -169,6 +283,7 @@ class TestLiveAPI:
         assert "de" in _ressourcensprachen(gewaehlt), gewaehlt.get("url")
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_die_gepinnten_kantone_existieren_noch(self):
         """Vier Kantone, vier Kennungen — jede gegen die echte Quelle.
 
@@ -186,6 +301,7 @@ class TestLiveAPI:
             assert "CSV" in formate, f"{kuerzel} fuehrt keine CSV mehr: {sorted(formate)}"
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_jeder_kantonsadapter_liest_die_echte_antwort(self):
         """Die Aufzeichnung belegt die Form von einem Tag; nur live faellt ein Wechsel auf.
 
@@ -200,6 +316,7 @@ class TestLiveAPI:
             assert inhalt, f"{kuerzel}: keine Datenpunkte"
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_zug_liefert_die_quoten_und_nicht_nur_die_anzahlen(self):
         """Zug liest aus zwei Datensätzen, und einer davon kann still ausfallen.
 
@@ -220,6 +337,7 @@ class TestLiveAPI:
         assert not fehlend, f"{juengste}: {fehlend} fehlen — zweiter Datensatz ausgefallen?"
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_die_jahresreihe_stimmt_noch_mit_der_quelle_ueberein(self):
         """Beschriftungen, Jahre und der Abstand der Reihen — in einem Abruf.
 
@@ -255,6 +373,7 @@ class TestLiveAPI:
         assert all(suchende[j] > registriert[j] for j in gemeinsam)
 
     @pytest.mark.asyncio
+    @_ohne_antwort_kein_befund
     async def test_youth_unemployment_live(self):
         """Live test for youth unemployment."""
         inp = YouthUnemploymentInput(canton="ZH")

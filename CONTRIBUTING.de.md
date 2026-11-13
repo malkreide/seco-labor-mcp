@@ -48,13 +48,14 @@ Quellen kommen in Phase 2 mit Graceful Degradation hinzu.
 **Kadenz:** täglich um 03:17 UTC, dazu jederzeit von Hand über *Actions → Live tests (nightly) → Run
 workflow*. Siehe [`.github/workflows/live.yml`](.github/workflows/live.yml).
 
-**Wer es sieht:** Ein roter Lauf öffnet ein Issue mit dem Label `upstream` und dem stabilen Titel «Live-Tests gegen unfallstatistik.ch rot (<Datum>)». Ein zweiter roter Lauf erkennt das offene Issue am Titelanfang und hängt sich an denselben Thread, statt ein zweites aufzumachen. Wird die Suite wieder grün, schliesst sich das Issue selbst.
+**Wer es sieht:** Ein roter Lauf mit `finding` öffnet ein Issue mit dem Label `upstream` und dem Titel «Live-Tests rot: <betroffene Quelle> (<Datum>)» — die Quelle ergibt sich aus der Klasse der gefallenen Tests (`TestLiveUvg` → unfallstatistik.ch, `TestLiveAPI` → Arbeitsmarktdaten von opendata.swiss, BFS und Kantonen). Ein zweiter roter Lauf erkennt das offene Issue am stabilen Anfang «Live-Tests rot» und hängt sich an denselben Thread, statt ein zweites aufzumachen. Wird die Suite wieder grün, schliesst sich das Issue selbst.
 
 **Drei Antworten, nicht zwei.** `scripts/classify_live_run.py` liest das JUnit-XML statt des
 Exit-Codes und unterscheidet: `clear` (gelaufen, grün), `finding` (gelaufen,
 etwas gefallen) und `unknown` (nicht gelaufen — Installation gescheitert, null
-Tests eingesammelt, alle übersprungen). Ein `unknown` schliesst nie ein Issue:
-Zuzumachen hiesse zu behaupten, der Vergleich sei gelaufen.
+Tests eingesammelt, alle übersprungen, oder eine Quelle hat nicht geantwortet).
+Ein `unknown` schliesst nie ein Issue: Zuzumachen hiesse zu behaupten, der
+Vergleich sei gelaufen.
 
 **Ein roter Live-Lauf heisst nicht zwingend «unser Fehler».** Er heisst: Der
 Vertrag mit der Quelle hat sich geändert, oder die Quelle ist gerade aus. Beides

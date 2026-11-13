@@ -115,6 +115,17 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 CKAN_BASE = "https://opendata.swiss/api/3/action"
+
+# Grenze für EINEN Versuch an der CKAN-API, nicht für den ganzen Abruf. Ohne
+# sie hängt ein Versuch bis HTTP_TIMEOUT und verbraucht dabei das ganze Budget
+# (retry_policy.RETRY_TOTAL_BUDGET) — zum zweiten Versuch kommt es nie. So
+# fielen die Live-Läufe vom 8. und 10.11.2026: je ein `package_show`, 31 und
+# 32 s bis zum ReadTimeout, während dieselben Abrufe in den Läufen davor und
+# danach 0,6 bis 1,3 s brauchten (gemessen an den Testdauern der Läufe 98 und
+# 100 bis 103). 10 s lassen dem langsamsten gemessenen Abruf mehr als das
+# Siebenfache und im Budget Platz für einen zweiten Versuch.
+CKAN_VERSUCH_TIMEOUT = 10.0
+
 AMSTAT_BASE = "https://www.amstat.ch"
 ARBEIT_SWISS_BASE = "https://www.arbeit.swiss"
 
@@ -515,17 +526,33 @@ async def _ckan_search(query: str, limit: int = 10) -> dict:
     Was der Ersatz *nicht* tut: so tun, als wären die Treffer SECO-Datensätze.
     Jeder Treffer trägt seinen Herausgeber, und die Werkzeuge zeigen ihn an.
     """
-    async with _client_scope() as client:
-        resp = await client.get(
-            f"{CKAN_BASE}/package_search",
-            params={
-                "q": query,
-                "rows": limit,
-                "sort": "score desc, metadata_modified desc",
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
+    resp = await _ckan_get(
+        "package_search",
+        {"q": query, "rows": limit, "sort": "score desc, metadata_modified desc"},
+    )
+    return resp.json()
+
+
+async def _ckan_get(action: str, params: dict[str, Any]) -> httpx.Response:
+    """Ein Aufruf der CKAN-API von opendata.swiss — mit Wiederholung.
+
+    Bis 2026-11 stand hier ein einziger `client.get`, während die Dateien
+    daneben schon die Leiter hatten. Ein Aussetzer der API ging deshalb direkt
+    an den Aufrufer: in vier Live-Läufen (21.9., 11.10., 8.11. und 10.11.2026)
+    je ein `httpx.ReadTimeout`, jedes Mal in der Nacht darauf wieder grün. Jede
+    Kantonsabfrage beginnt mit `package_show`; ein Aussetzer von Sekunden liess
+    also die ganze Antwort scheitern.
+
+    429 wird nicht wiederholt: Ein «zu viele Anfragen» ist eine Antwort der
+    Quelle, und `_to_execution_error` gibt sie dem Modell als Hinweis zum
+    Zuwarten weiter (OBS-001). Wiederholt wird, wo nichts oder nur ein 5xx kam.
+    """
+    return await _get_with_retry(
+        f"{CKAN_BASE}/{action}",
+        params=params,
+        versuch_timeout=CKAN_VERSUCH_TIMEOUT,
+        wiederhole_429=False,
+    )
 
 
 async def _fetch_bytes_with_retry(url: str) -> bytes:
@@ -544,6 +571,27 @@ async def _fetch_bytes_with_retry(url: str) -> bytes:
     eine benannte Antwort, statt eine leere Reihe auszugeben.
     """
     await _validate_external_url(url)
+    return (await _get_with_retry(url)).content
+
+
+async def _get_with_retry(
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    versuch_timeout: float | None = None,
+    wiederhole_429: bool = True,
+) -> httpx.Response:
+    """Ein GET mit der Portfolio-Leiter 2s/4s/8s und dem Budget.
+
+    Was wiederholt wird, entscheidet die Aufrufstelle (siehe `retry_policy`):
+    5xx und Netzfehler immer, 429 nur mit ``wiederhole_429``.
+
+    ``versuch_timeout`` begrenzt den einzelnen Versuch. Ohne die Grenze darf ein
+    Versuch so lange warten, wie das Budget reicht — eine Quelle, die schweigt,
+    verbraucht es dann mit dem ersten Versuch, und zum zweiten kommt es nie.
+    Läuft das Budget ab, ist Schluss; läuft nur die Versuchsgrenze ab, kommt der
+    nächste Versuch.
+    """
     deadline = time.monotonic() + retry_policy.RETRY_TOTAL_BUDGET
     last_error: Exception | None = None
 
@@ -558,24 +606,26 @@ async def _fetch_bytes_with_retry(url: str) -> bytes:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
+        frist = remaining if versuch_timeout is None else min(remaining, versuch_timeout)
         try:
-            async with _client_scope() as client, asyncio.timeout(remaining):
-                resp = await client.get(url)
+            async with _client_scope() as client, asyncio.timeout(frist):
+                resp = await client.get(url, params=params)
                 resp.raise_for_status()
-                return resp.content
-        except TimeoutError as exc:  # Budget aufgebraucht, nicht nur dieser Versuch
-            last_error = exc
-            break
+                return resp
+        except TimeoutError:
+            last_error = TimeoutError(f"keine Antwort innert {frist:.3g} s")
+            if frist >= remaining:  # Budget aufgebraucht, nicht nur dieser Versuch
+                break
         except httpx.HTTPStatusError as exc:
             last_error = exc
             code = exc.response.status_code
-            if not (code == 429 or 500 <= code < 600):
+            if not ((code == 429 and wiederhole_429) or 500 <= code < 600):
                 raise
         except httpx.RequestError as exc:
             last_error = exc
 
     raise UpstreamUnreachableError(
-        f"{url} nach {attempt + 1} Versuch(en) nicht erreichbar: "
+        f"{httpx.URL(url, params=params)} nach {attempt + 1} Versuch(en) nicht erreichbar: "
         # `str(last_error) or ...`, nicht `last_error or ...`: eine Ausnahme mit
         # leerem `str()` ist trotzdem wahr, und `httpx.ConnectError`,
         # `ConnectTimeout` und `ReadTimeout` haben genau das — also die Menge,
@@ -746,13 +796,7 @@ async def _bfs_jahresreihe() -> dict[str, Any]:
 
 async def _ckan_get_dataset(dataset_id: str) -> dict:
     """Fetch a specific dataset from opendata.swiss CKAN."""
-    async with _client_scope() as client:
-        resp = await client.get(
-            f"{CKAN_BASE}/package_show",
-            params={"id": dataset_id},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    return (await _ckan_get("package_show", {"id": dataset_id})).json()
 
 
 def _extract_title(title_field: Any) -> str:
