@@ -254,6 +254,37 @@ Die Kosten der Ableitung sind gemessen: ein Arbeitstag, an dem der PR-Text den
 falschen Namen trug und in den Einstellungen nach einer Zeichenfolge gesucht
 wurde, die dort nicht steht.
 
+**«1 unpushed commit» nach einem Merge ist meistens ein veralteter Ref.** Der
+Stop-Hook rechnet gegen `refs/remotes/origin/<branch>`, und dieser Ref löst
+lokal weiter auf, nachdem GitHub den Branch beim Merge gelöscht hat. Er steht
+dann noch auf dem gemergten Head; der Merge-Commit liegt genau einen darüber,
+daher ist die Zahl immer `1`. Am 11.9., 14.9. und 13./14.11.2026 dreimal
+dieselbe Meldung, jedes Mal ohne einen einzigen eigenen Commit.
+
+- **Die Quelle ist `git ls-remote --heads origin`**, nicht der Tracking-Ref.
+  Fehlt der Branch dort, gibt es nichts zu pushen — gleichgültig, was der Ref
+  noch führt.
+- **Der Nachweis ist `git rev-list --left-right --count origin/main...HEAD`.**
+  `0 0` bei sauberem Arbeitsbaum heisst: HEAD ist genau `main`.
+- **Pushen ist die falsche Reaktion.** Es belebt einen gelöschten, bereits
+  gemergten Branch wieder.
+
+**Und `--prune` wirkt nur im Aufruf ohne Refspec.** `git fetch --prune origin`
+räumt den Ref weg; `git fetch --prune origin main` prunt nur im Ziel dieser
+Refspec und lässt ihn stehen. Daran kam die Meldung am 13./14.11. zum dritten
+Mal: Der Lauf davor war der mit Refspec, sah nach Aufräumen aus und hatte den
+Branch-Ref nicht angefasst. Nachgestellt mit git 2.43.0 in einem
+Wegwerf-Repo — mit Refspec überlebt der Ref und die Voraus-Rechnung liest `1`,
+ohne Refspec ist er weg. Danach markiert `git status -sb` den Upstream als
+`[gone]`.
+
+Die erste Nachstellung zeigte das Gegenteil, und zwar aus einem Fehler der
+Probe: Sie löschte den Remote-Branch mit `git push origin --delete` aus
+demselben Klon, und das räumt den Tracking-Ref als Nebenwirkung gleich mit
+auf. Geprüft wurde so ein Ref, der schon vor dem Fetch weg war — die Probe
+konnte nur bestätigen. Erst die Löschung im Remote selbst (`git update-ref -d`
+im Bare-Repo) stellt her, was GitHub beim Merge hinterlässt.
+
 ### Wenn Codex erst nach dem Merge urteilt
 
 Am 23.9.2026 nahm Commit `3371e72` den Codex-Abschnitt aus dieser Datei, mit
