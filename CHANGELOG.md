@@ -60,6 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Behoben
 
+- **Der Live-Test für das Jugend-Werkzeug mass keine Quelle.** Er fragte
+  Zürich ab; Zürich führt keine Jugendreihe, und das Werkzeug antwortet dort
+  mit einer festen Absage, ohne abzurufen. Mit totem Proxy blieb er grün.
+  Jetzt läuft er für die beiden Kantone, für die das Werkzeug wirklich
+  abruft: TG muss in der jüngsten Periode echte Anzahlen der Altersklasse
+  «15-24 Jahre» liefern, kleiner als der Kantonswert, ZG eine Quote zwischen
+  0 und 100. Benennt Thurgau die Altersklasse um, fiel das bisher nirgends
+  auf — das Werkzeug gab still leere Werte aus.
+
 - **Tabelle 2.4 BUV verlor ihre Sektoren II und III — nicht weil die Quelle
   sich änderte, sondern pypdf.** `Ts26.pdf` liegt seit dem 2026-06-12
   unverändert online. pypdf 6.20.0 (2026-10-09) setzt im Layout-Modus die
