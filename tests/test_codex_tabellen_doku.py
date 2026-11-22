@@ -29,6 +29,7 @@ die Regel aus dem Abschnitt selbst: Zeiten aus `merged_at`, `created_at` und
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 
@@ -235,4 +236,164 @@ def test_die_haeufung_und_der_ausreisser_stimmen() -> None:
     assert f"Sieben der {_ZAHLWORT[len(dauern)]} Läufe liegen dabei zwischen" in text, (
         f"Der Text nennt nicht {_ZAHLWORT[len(eng)]} eng liegende Laeufe von "
         f"{_ZAHLWORT[len(dauern)]}."
+    )
+
+
+# ----------------------------------------------------------------------------
+# Der Fund vom 22.11.2026: ein Lauf, der nicht stattfand
+#
+# Die drei Kommentartexte unten sind wortgetreu aus der GitHub-API geholt, mit
+# Datum und Herkunft. Nachgebildet ist keiner — eine erfundene Fassung koennte
+# genau die Annahme bestaetigen, gegen die der Erkenner gebaut ist.
+#
+# Sie liegen bewusst NICHT unter `tests/fixtures/`: `fixture_data.recorded_names`
+# zaehlt alles direkt in diesem Verzeichnis, Unterordner eingeschlossen, und
+# `test_jede_fixture_steht_in_der_provenance` verlangt fuer jeden Namen einen
+# Block in der von `scripts/record_fixtures.py` geschriebenen PROVENANCE.md.
+# Ein Ordner dort machte also zwei fremde Tests rot, und der Recorder kann
+# GitHub-Kommentare nicht nachziehen.
+# ----------------------------------------------------------------------------
+
+# PR #99, abgefragt am 22.11.2026 um 18:34:42 UTC (Lauf gestartet, kein Urteil).
+_KOMMENTAR_LAEUFT = """<!-- codex-pull-request-review-summary -->
+<!-- codex-review-state:v1 {"code_review":{"commit_sha":"d87669ed9231aa83dade\
+2240b4b57db816a0f46d","has_any_findings":null,"has_unresolved_findings":null,\
+"status":"running"},"security_review":{"commit_sha":null,"has_any_findings":\
+null,"has_unresolved_findings":null,"status":null}} -->
+
+<details>
+<summary><strong>Codex Review Summary</strong>: \U0001f504 Running</summary>
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| \U0001f4dd **Code Review** | \U0001f504 **Running** since 2026-11-22T18:34:40.847626Z \
+| `d87669e` | Draft marked ready |
+
+</details>"""
+
+# Derselbe Kommentar, abgefragt um 18:35:41 UTC — in place aktualisiert.
+_KOMMENTAR_BEFUNDLOS = """<!-- codex-pull-request-review-summary -->
+<!-- codex-review-state:v1 {"code_review":{"commit_sha":"d87669ed9231aa83dade\
+2240b4b57db816a0f46d","has_any_findings":false,"has_unresolved_findings":false,\
+"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":\
+null,"has_unresolved_findings":null,"status":null}} -->
+
+<details>
+<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| \U0001f4dd **Code Review** | ✅ **Completed** 2026-11-22T18:35:13.668776Z \
+| `d87669e` | Draft marked ready |
+
+</details>"""
+
+# PR #100, 22.11.2026 um 18:42:35 UTC — acht Sekunden nach dem Eroeffnen des
+# Entwurfs. Der ganze Kommentar, nicht ein Ausschnitt.
+_KOMMENTAR_KEIN_LAUF = (
+    "To use Codex here, [create an environment for this repo]"
+    "(https://chatgpt.com/codex/cloud/settings/environments)."
+)
+
+_MARKER_TABELLE = "<!-- codex-pull-request-review-summary -->"
+_MARKER_ZUSTAND = "<!-- codex-review-state:v1"
+
+
+def _codex_zustand(kommentare: list[str], reviews: list[object]) -> str:
+    """Die Regel aus CLAUDE.md als Kode: «kein Lauf», «laeuft», «befundlos», «Befund».
+
+    Erste Pruefung ist, ob ueberhaupt ein Statuskommentar da ist. Fehlt er, ist
+    das die Auskunft — und nicht, wie das leere `get_reviews` daneben
+    nahelegt, ein sauberer Lauf.
+
+    Der Rueckfall ohne `codex-review-state:v1` liest die Statustabelle, weil der
+    Marker nicht rueckwirkend gesetzt wird.
+    """
+    statusk = [k for k in kommentare if _MARKER_TABELLE in k]
+    if not statusk:
+        return "kein Lauf"
+    assert len(statusk) == 1, f"Mehr als ein Statuskommentar ({len(statusk)})."
+    k = statusk[0]
+
+    if _MARKER_ZUSTAND in k:
+        roh = k.split(_MARKER_ZUSTAND, 1)[1].split("-->", 1)[0].strip()
+        zustand = json.loads(roh)["code_review"]
+        if zustand["status"] != "completed":
+            return "laeuft"
+        return "Befund" if (zustand["has_any_findings"] or reviews) else "befundlos"
+
+    if "**Completed**" not in k:
+        return "laeuft"
+    return "Befund" if reviews else "befundlos"
+
+
+def _nur_reviews(reviews: list[object]) -> str:
+    """Die falsche Regel, als Kode: «sauber, weil `get_reviews` leer ist».
+
+    Steht hier, damit die Zusicherung darunter den Unterschied messen kann
+    statt ihn zu behaupten.
+    """
+    return "Befund" if reviews else "befundlos"
+
+
+def test_der_erkenner_liest_die_aufgezeichneten_kommentare() -> None:
+    """Drei echte Kommentare, drei verschiedene Zustaende — bei leerem `get_reviews`.
+
+    Das ist der Kern des Funds in einer Zusicherung: Dasselbe leere
+    `get_reviews` begleitet einen laufenden, einen befundlosen und einen gar
+    nicht stattgefundenen Lauf.
+    """
+    assert _codex_zustand([_KOMMENTAR_LAEUFT], []) == "laeuft"
+    assert _codex_zustand([_KOMMENTAR_BEFUNDLOS], []) == "befundlos"
+    assert _codex_zustand([_KOMMENTAR_KEIN_LAUF], []) == "kein Lauf"
+
+
+def test_kein_statuskommentar_ist_nicht_befundlos() -> None:
+    """Der Fund von PR #100, und was die falsche Regel daraus gemacht haette.
+
+    Gemessen wird nicht nur, dass der Erkenner «kein Lauf» sagt, sondern dass
+    die naheliegende Regel auf derselben Eingabe «befundlos» sagt. Ohne diesen
+    Vergleich waere der Satz in CLAUDE.md eine Behauptung ueber einen Fehler,
+    den niemand nachgerechnet hat.
+    """
+    richtig = _codex_zustand([_KOMMENTAR_KEIN_LAUF], [])
+    falsch = _nur_reviews([])
+    assert richtig == "kein Lauf"
+    assert falsch == "befundlos"
+    assert richtig != falsch, (
+        "Die beiden Regeln kommen auf derselben Eingabe zum selben Ergebnis — "
+        "dann belegt diese Zusicherung die Kosten der falschen Regel nicht."
+    )
+
+    # Positivkontrolle: Auf einem echten befundlosen Lauf sind beide einig.
+    # Ohne sie liesse sich der Erkenner auch so lesen, als sage er immer
+    # «kein Lauf».
+    assert _codex_zustand([_KOMMENTAR_BEFUNDLOS], []) == _nur_reviews([]) == "befundlos"
+
+
+def test_ein_befund_schlaegt_den_marker() -> None:
+    """Nicht-leeres `get_reviews` bleibt ein Befund, auch bei «completed».
+
+    CLAUDE.md nennt den Fall von PR #73: «Completed» stand zur selben Minute
+    wie ein P2-Befund im Review-Objekt. Ein Erkenner, der nur den Marker liest,
+    wuerde ihn durchwinken.
+    """
+    assert _codex_zustand([_KOMMENTAR_BEFUNDLOS], [object()]) == "Befund"
+
+
+def test_die_anweisung_nennt_das_fehlen_als_auskunft() -> None:
+    """Der Satz muss in CLAUDE.md stehen — sonst gatet dieser Test nichts.
+
+    Hier stand zuerst eine zweite Zusicherung, der Tabellen-Marker duerfe nicht
+    wortgetreu im Dokument vorkommen. Sie fiel sofort, und zu Recht: CLAUDE.md
+    zitiert den Marker als Inline-Kode, weil der Abschnitt ihn erklaert. Die
+    Sorge dahinter war gegenstandslos — `_codex_zustand` bekommt nur
+    Kommentartexte, nie das Dokument. Die Gegenprobe zum Erkenner leistet der
+    Vergleich mit `_nur_reviews` darueber.
+    """
+    text = _CLAUDE_MD.read_text(encoding="utf-8")
+    assert "Kein Statuskommentar\nheisst nicht befundlos, sondern ungeprüft." in text, (
+        "CLAUDE.md nennt nicht mehr, dass ein fehlender Statuskommentar die "
+        "Auskunft ist. Ohne diesen Satz bleibt nur das Paar von oben, und das "
+        "sieht auf PR #100 wie ein sauberer Lauf aus."
     )

@@ -446,6 +446,38 @@ Belastbar ist das Paar: Tabelle auf «Completed» **und** `get_reviews` leer.
 «Completed» allein sagt nur, dass ein Lauf stattfand — auf PR #73 stand es
 zur selben Minute wie ein P2-Befund im Review-Objekt.
 
+**Ein Lauf, der nicht stattfindet, meldet sich als gewöhnlicher Kommentar.** Am
+22.11.2026 um 18:42:35 UTC stand auf PR #100 statt des Statuskommentars dies,
+acht Sekunden nach dem Eröffnen des Entwurfs:
+
+```
+To use Codex here, [create an environment for this repo](...).
+```
+
+Kein `codex-pull-request-review-summary`, kein `codex-review-state:v1`, keine
+Statustabelle — und `get_reviews` leer. Es hat kein Lauf stattgefunden. Sieben
+Minuten vorher, auf #99, war derselbe Bot normal durchgelaufen.
+
+Das trifft die Regel darüber an ihrer schwächsten Stelle. `get_reviews` ist
+hier **leer wie bei allen acht befundlosen Läufen**; wer «sauber» an diesem
+einen Signal festmacht, bucht einen PR als geprüft, den niemand angesehen hat.
+Das Paar trägt, weil es die Tabelle verlangt — aber nur, wenn man deren Fehlen
+auch bemerkt. Fehlt sie, ist das Fehlen die Auskunft: **Kein Statuskommentar
+heisst nicht befundlos, sondern ungeprüft.**
+
+Dieselbe Klasse wie der 403, der sich als «Label nicht gefunden» ausgab: eine
+Störung, verpackt als Auskunft. Nur steckt die Verpackung hier nicht im
+Antworttext, sondern in dem, was gar nicht da ist.
+
+Was die Beobachtung **nicht** hergibt, ist der Grund. Die Meldung nennt keinen,
+und zwei Lesarten passen gleich gut. Entweder reagiert der Bot neu auch auf das
+Eröffnen eines Entwurfs und meldet dabei, dass er nicht laufen kann — #98 und
+#99 bekamen als Entwurf keinen Kommentar, #100 acht Sekunden nach dem Eröffnen
+einen. Oder in den sieben Minuten zwischen #99 und #100 hat sich an der
+Codex-Einrichtung etwas geändert. Welche zutrifft, ist ungemessen; die
+Einstellungen liegen nicht in diesem Repo, und dem Link in der Meldung zu
+folgen wäre eine Änderung daran, keine Messung.
+
 **Seit dem 13.11.2026 sagt es ein Marker direkt.** Der Statuskommentar auf
 #91 trägt neben dem bekannten `codex-pull-request-review-summary` einen
 zweiten, maschinenlesbaren:
