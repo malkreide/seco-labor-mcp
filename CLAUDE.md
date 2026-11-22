@@ -304,6 +304,28 @@ dieselbe Meldung, jedes Mal ohne einen einzigen eigenen Commit.
 - **Pushen ist die falsche Reaktion.** Es belebt einen gelöschten, bereits
   gemergten Branch wieder.
 
+**Manchmal stimmt die Zahl, und die Handlung ist trotzdem falsch.** Am
+22.11.2026 meldete der Hook denselben einen Commit, und diesmal war der Ref
+nicht veraltet: `git ls-remote` führte den Branch, GitHub hatte ihn beim Merge
+stehen lassen. Der Vorsprung war echt — und bestand aus dem Merge-Commit des
+eigenen PR, weil der lokale Branch nach dem Merge auf `main` vorgezogen worden
+war, während der Remote-Branch auf dem letzten PR-Commit blieb.
+
+Die Unterscheidung kostet eine Zeile:
+
+```bash
+git merge-base --is-ancestor HEAD origin/main
+```
+
+Geht sie durch, liegt alles, was der Branch trägt, bereits in `main`; der
+«Vorsprung» ist dessen eigener Merge-Commit. Ein Push zöge nur einen
+erledigten Branch auf `main` nach und brächte nichts dorthin, was fehlte.
+
+Beide Fälle sehen in der Meldung gleich aus und trennen sich nicht daran, ob
+die Zahl stimmt, sondern daran, **wogegen** sie gerechnet ist. Deshalb steht
+oben `origin/main` als Bezug und nicht der Branch-Ref: Der ist im einen Fall
+veraltet und im anderen gültig — und in beiden der falsche Massstab.
+
 **Und `--prune` wirkt nur im Aufruf ohne Refspec.** `git fetch --prune origin`
 räumt den Ref weg; `git fetch --prune origin main` prunt nur im Ziel dieser
 Refspec und lässt ihn stehen. Daran kam die Meldung am 13./14.11. zum dritten
