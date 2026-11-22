@@ -19,6 +19,10 @@ Netzproblem hält, arbeitet weiter auf genau dem veralteten Klon, vor dem dieser
 Absatz warnt. Den `:?`-Schutz nicht weglassen: Bei leerem `B` fetcht git still
 den Remote-HEAD und endet mit 0.
 
+Die Refspec gehört ebenso dazu, und nicht aus Höflichkeit: Ohne sie ist
+`HEAD..FETCH_HEAD` nicht am Standard-Branch gemessen — gemessen weiter unten
+unter «Und `git merge FETCH_HEAD` bringt den Standard-Branch nur mit Refspec».
+
 Ein veralteter Klon erzeugt eine rote CI, deren Ursache nicht im Diff steht.
 Am 3.8.2026 zweimal passiert — beide Male fehlten genau die Commits, die
 das Gate einführten, an dem der Branch scheiterte.
@@ -356,6 +360,57 @@ demselben Klon, und das räumt den Tracking-Ref als Nebenwirkung gleich mit
 auf. Geprüft wurde so ein Ref, der schon vor dem Fetch weg war — die Probe
 konnte nur bestätigen. Erst die Löschung im Remote selbst (`git update-ref -d`
 im Bare-Repo) stellt her, was GitHub beim Merge hinterlässt.
+
+**Und `git merge FETCH_HEAD` bringt den Standard-Branch nur mit Refspec.** Am
+22.11.2026 wurde der Klon mit
+`git fetch --prune origin && git merge --ff-only FETCH_HEAD` nachgezogen — der
+Prune-Aufruf aus dem Absatz davor, zusammengezogen mit dem Merge aus dem
+Hook-Vorschlag. Der Merge meldete «Already up to date.» und endete mit 0. Der
+Klon blieb einen Commit hinter `main`: genau der Zustand, vor dem der erste
+Abschnitt dieser Datei warnt, hergestellt von einem Befehl, der Erfolg meldet.
+Nachgestellt mit git 2.43.0, serverseitige Löschung per `git update-ref -d`:
+
+| Zweig beim Merge gelöscht | Aufruf | `for-merge`-Zeilen | `git merge --ff-only FETCH_HEAD` | danach hinter `main` |
+|---|---|---|---|---|
+| ja | ohne Refspec | 0 | «Already up to date.» | 1 |
+| ja | mit Refspec `main` | 1 | «Updating …» | 0 |
+| nein | ohne Refspec | 1 | «Already up to date.» | 1 |
+| nein | mit Refspec `main` | 1 | «Updating …» | 0 |
+
+Hinter demselben Satz stehen zwei verschiedene Gründe. Ist der Zweig gelöscht,
+trägt FETCH_HEAD keine einzige `for-merge`-Zeile — `git merge` nimmt nur diese,
+hat also kein Ziel und endet zufrieden. Existiert er, ist die `for-merge`-Zeile
+der *Zweig* und nicht `main`; gemergt wird dann etwas, das HEAD schon enthält.
+
+**Beim Zählen greift eine andere Regel, mit demselben Ausgang.**
+`HEAD..FETCH_HEAD` löst FETCH_HEAD über die *erste Zeile* der Datei auf, nicht
+über die `for-merge`-Zeilen. Ohne Refspec ist das der Upstream des aktuellen
+Zweigs, solange er existiert — die Zahl liest dann `0`, während `main` einen
+Commit voraus ist. Ist der Zweig gelöscht, ist es der Ref, der zufällig
+zuoberst steht; im Wegwerf-Repo mit einem dritten Zweig war das
+`aaa-anderer`, und die Zahl stimmte bloss zufällig. Der Befund ist deshalb
+nicht «die Zahl ist falsch», sondern das Unangenehmere: Sie ist nicht an `main`
+verankert.
+
+**Die beiden richtigen Verhaltensweisen ziehen auseinander.** Ohne Refspec wird
+der veraltete Tracking-Ref geräumt, aber FETCH_HEAD taugt weder zum Mergen noch
+zum Zählen; mit Refspec taugt es für beides, und der Ref bleibt stehen — das
+ist der Absatz davor. Wer beides zusammenzieht, erwischt aus jedem Aufruf die
+falsche Hälfte. Gemessen tut beides dieser Aufruf:
+
+```bash
+git fetch --prune origin && git merge --ff-only origin/main
+```
+
+Der Unterschied ist, dass `origin/main` den Branch beim Namen nennt, statt sich
+darauf zu verlassen, was der Fetch als mergewürdig markiert oder in welcher
+Reihenfolge er die Zeilen schreibt. Dieselbe Lehre wie im Absatz davor, eine
+Ebene weiter: nicht der Schalter entscheidet, sondern wogegen gerechnet wird.
+
+Die Kontrolle steckt in der Tabelle selbst: Dieselbe Probe lässt den Merge in
+den Refspec-Zeilen wirklich vorrücken («Updating a..b», danach `0`). Sie kann
+beide Ergebnisse zeigen — die zwei «Already up to date.» sind gemessen und
+nicht das Ergebnis einer Probe, die nichts tat.
 
 ### Wenn Codex erst nach dem Merge urteilt
 

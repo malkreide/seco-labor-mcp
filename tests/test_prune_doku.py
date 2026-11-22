@@ -465,3 +465,276 @@ def test_der_vorsprung_kann_der_merge_commit_selbst_sein(tmp_path: pathlib.Path)
     )
 
     _git("merge-base", "--is-ancestor", "HEAD", "origin/main", cwd=klon)
+
+
+# ----------------------------------------------------------------------------
+# Der FETCH_HEAD-Fund vom 22.11.2026
+#
+# Dieselbe Familie wie oben, eine Ebene weiter: Nicht mehr, ob der Prune den
+# Ref raeumt, sondern ob der Merge danach `main` ueberhaupt holt. Der Aufruf
+# `git fetch --prune origin && git merge --ff-only FETCH_HEAD` meldet
+# «Already up to date.» mit Rueckgabe 0 und laesst den Klon einen Commit
+# hinter `main` — also in genau dem Zustand, vor dem der erste Abschnitt von
+# CLAUDE.md warnt.
+# ----------------------------------------------------------------------------
+
+_EMPFOHLEN = "git fetch --prune origin && git merge --ff-only origin/main"
+
+
+def _kodeblock_zeilen(text: str) -> list[str]:
+    """Die Zeilen aus eingezaeunten Kodebloecken, entrandet.
+
+    `_kode_stellen` findet nur Inline-Spannen. Der empfohlene Aufruf steht in
+    CLAUDE.md in einem ```bash-Block, und ein Test, der ihn im Fliesstext
+    gelten liesse, waere wieder die Prosa-Pruefung, gegen die diese Datei
+    gebaut ist.
+    """
+    zeilen: list[str] = []
+    drin = False
+    for roh in text.splitlines():
+        if roh.lstrip().startswith("```"):
+            drin = not drin
+            continue
+        if drin:
+            zeilen.append(roh.strip())
+    return zeilen
+
+
+def _lage_mit_vorgezogenem_main(
+    arbeitsplatz: pathlib.Path, *, zweig_loeschen: bool
+) -> pathlib.Path:
+    """Ein Klon, der einen Commit hinter `main` liegt und nichts davon weiss.
+
+    Anders als `_lage_nach_dem_merge`: Dort steht der lokale Zweig schon auf
+    dem Merge-Commit. Hier wird im Remote gemergt, *nachdem* der Klon gezogen
+    wurde — die Lage also, die man vorfindet, wenn man nach dem Merge des
+    eigenen PR den Klon nachziehen will.
+
+    Dafuer braucht es zwei Arbeitskopien: `saat` schiebt den Merge in den
+    Remote, `klon` ist der Gemessene. Mit nur einer Kopie waere `origin/main`
+    im Gemessenen schon durch den eigenen Push aktuell, und die Messung liefe
+    an der Sache vorbei.
+
+    `zweig_loeschen` entscheidet, ob GitHub den Zweig beim Merge entfernt hat.
+    Davon haengt ab, ob FETCH_HEAD ueberhaupt eine `for-merge`-Zeile traegt —
+    und das ist der eine der beiden Gruende, aus denen der Merge ins Leere
+    laeuft.
+    """
+    fernab = arbeitsplatz / "fernab.git"
+    saat = arbeitsplatz / "saat"
+    klon = arbeitsplatz / "klon"
+
+    _git("init", "--quiet", "--bare", str(fernab), cwd=arbeitsplatz)
+    _git("init", "--quiet", "-b", "main", str(saat), cwd=arbeitsplatz)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Basis", cwd=saat)
+    _git("remote", "add", "origin", str(fernab), cwd=saat)
+    _git("push", "--quiet", "origin", "main", cwd=saat)
+    _git("checkout", "--quiet", "-b", _ZWEIG, cwd=saat)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Arbeit", cwd=saat)
+    _git("push", "--quiet", "origin", _ZWEIG, cwd=saat)
+
+    # Erst jetzt klonen: der Klon kennt `main` noch vor dem Merge.
+    _git("clone", "--quiet", str(fernab), str(klon), cwd=arbeitsplatz)
+    _git("checkout", "--quiet", _ZWEIG, cwd=klon)
+
+    _git("checkout", "--quiet", "main", cwd=saat)
+    _git("merge", "--quiet", "--no-ff", _ZWEIG, "-m", "Merge", cwd=saat)
+    _git("push", "--quiet", "origin", "main", cwd=saat)
+    if zweig_loeschen:
+        _git("update-ref", "-d", f"refs/heads/{_ZWEIG}", cwd=fernab)
+    return klon
+
+
+def _hinter_main(klon: pathlib.Path) -> str:
+    return _git("rev-list", "--count", "HEAD..origin/main", cwd=klon)
+
+
+def _for_merge_zeilen(klon: pathlib.Path) -> list[str]:
+    datei = klon / ".git" / "FETCH_HEAD"
+    return [
+        zeile
+        for zeile in datei.read_text(encoding="utf-8").splitlines()
+        if zeile.strip() and "not-for-merge" not in zeile
+    ]
+
+
+def test_die_probe_liegt_wirklich_hinter_main(tmp_path: pathlib.Path) -> None:
+    """Die Kontrolle zur Lage: Ohne Rueckstand misst alles darunter nichts.
+
+    Ein Klon, der schon auf `main` steht, liest nach jedem Aufruf «0 hinter
+    main» — und beide Haelften der Tabelle sahen gleich gut aus. Deshalb hier
+    zuerst: Nach einem Fetch mit Refspec, der nur `origin/main` nachfuehrt und
+    HEAD nicht anfasst, muss der Rueckstand genau `1` sein.
+    """
+    for nummer, zweig_loeschen in enumerate((True, False)):
+        arbeitsplatz = tmp_path / f"lage-{nummer}"
+        arbeitsplatz.mkdir()
+        klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=zweig_loeschen)
+        _git("fetch", "origin", "main", cwd=klon)
+        assert _hinter_main(klon) == "1", (
+            f"Mit zweig_loeschen={zweig_loeschen} liegt der Klon "
+            f"{_hinter_main(klon)} Commits hinter `main`, erwartet war 1 — die "
+            "Probe stellt den Rueckstand nicht her."
+        )
+
+
+def test_merge_fetch_head_ohne_refspec_bringt_main_nicht(tmp_path: pathlib.Path) -> None:
+    """Der Fund, beide Zeilen: ohne Refspec holt der Merge `main` nicht.
+
+    Gemessen wird nicht die Meldung, sondern der Rueckstand danach. Dass der
+    Befehl dabei mit 0 endet, ist der gefaehrliche Teil und steht als eigene
+    Zusicherung da: `_git` wuerde bei einem Fehlschlag selbst scheitern, und
+    ein Test, der nur den Rueckstand liest, koennte «lief nicht» nicht von
+    «lief und tat nichts» unterscheiden.
+    """
+    for nummer, zweig_loeschen in enumerate((True, False)):
+        arbeitsplatz = tmp_path / f"ohne-{nummer}"
+        arbeitsplatz.mkdir()
+        klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=zweig_loeschen)
+
+        _git("fetch", "--prune", "origin", cwd=klon)
+        meldung = _git("merge", "--ff-only", "FETCH_HEAD", cwd=klon)
+
+        assert "Already up to date" in meldung, (
+            f"Mit zweig_loeschen={zweig_loeschen} meldete der Merge «{meldung}» "
+            "statt «Already up to date.» — dann stimmt die Tabelle in "
+            "CLAUDE.md nicht mehr."
+        )
+        assert _hinter_main(klon) == "1", (
+            f"Mit zweig_loeschen={zweig_loeschen} hat "
+            "`git merge --ff-only FETCH_HEAD` nach einem Fetch ohne Refspec "
+            "`main` doch geholt. Dann ist der Absatz in CLAUDE.md zu "
+            "korrigieren, nicht dieser Test."
+        )
+
+
+def test_merge_fetch_head_mit_refspec_bringt_main(tmp_path: pathlib.Path) -> None:
+    """Die andere Haelfte — und zugleich die Kontrolle zur Haelfte darueber.
+
+    Ohne diese Zusicherung koennte der Test daneben auch dann gruen bleiben,
+    wenn die Probe den Merge grundsaetzlich nicht zum Laufen bringt. Hier
+    rueckt derselbe Merge in derselben Lage wirklich vor.
+    """
+    for nummer, zweig_loeschen in enumerate((True, False)):
+        arbeitsplatz = tmp_path / f"mit-{nummer}"
+        arbeitsplatz.mkdir()
+        klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=zweig_loeschen)
+
+        _git("fetch", "--prune", "origin", "main", cwd=klon)
+        meldung = _git("merge", "--ff-only", "FETCH_HEAD", cwd=klon)
+
+        assert "Updating" in meldung, (
+            f"Mit zweig_loeschen={zweig_loeschen} rueckte der Merge nicht vor "
+            f"(«{meldung}») — dann misst der Test darueber nicht den Aufruf, "
+            "sondern eine Probe, die den Merge ueberhaupt nicht ans Laufen "
+            "bringt."
+        )
+        assert _hinter_main(klon) == "0", (
+            f"Mit zweig_loeschen={zweig_loeschen} liegt der Klon nach dem "
+            "Merge mit Refspec weiter hinter `main`."
+        )
+
+
+def test_die_for_merge_zeilen_erklaeren_beide_faelle(tmp_path: pathlib.Path) -> None:
+    """Der Mechanismus hinter den zwei Zeilen, nicht bloss ihr Ausgang.
+
+    CLAUDE.md nennt zwei verschiedene Gruende fuer dieselbe Meldung. Diese
+    Zusicherung haelt sie auseinander: Beim geloeschten Zweig traegt FETCH_HEAD
+    keine `for-merge`-Zeile, beim vorhandenen genau eine — und die zeigt auf
+    den Zweig, nicht auf `main`. Ohne diese Trennung liesse sich der Absatz
+    auch mit nur einem der beiden Gruende lesen.
+    """
+    arbeitsplatz = tmp_path / "geloescht"
+    arbeitsplatz.mkdir()
+    klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=True)
+    _git("fetch", "--prune", "origin", cwd=klon)
+    assert _for_merge_zeilen(klon) == [], (
+        "Beim geloeschten Zweig traegt FETCH_HEAD doch eine `for-merge`-Zeile: "
+        f"{_for_merge_zeilen(klon)}"
+    )
+
+    arbeitsplatz = tmp_path / "vorhanden"
+    arbeitsplatz.mkdir()
+    klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=False)
+    _git("fetch", "--prune", "origin", cwd=klon)
+    zeilen = _for_merge_zeilen(klon)
+    assert len(zeilen) == 1, f"Erwartet war genau eine `for-merge`-Zeile, gelesen: {zeilen}"
+    assert zeilen[0].split()[0] == _git("rev-parse", _REF, cwd=klon), (
+        "Die `for-merge`-Zeile zeigt nicht auf den Zweig — dann ist der in "
+        f"CLAUDE.md genannte Grund ein anderer. Gelesen: {zeilen[0]}"
+    )
+
+
+def test_zaehlen_gegen_fetch_head_ist_ohne_refspec_nicht_an_main_verankert(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Die zweite Regel: `HEAD..FETCH_HEAD` nimmt die erste Zeile der Datei.
+
+    Deshalb traegt der Aufruf im ersten Abschnitt von CLAUDE.md seine Refspec.
+    Gemessen wird der belastbare Fall — Zweig vorhanden, also die erste Zeile
+    der Upstream des aktuellen Zweigs: Die Zahl liest `0`, waehrend `main`
+    einen Commit voraus ist. Mit Refspec liest dieselbe Rechnung `1`; das ist
+    hier die Kontrolle, ohne die ein stets falsch rechnender Aufbau gleich
+    aussaehe.
+    """
+    arbeitsplatz = tmp_path / "ohne"
+    arbeitsplatz.mkdir()
+    klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=False)
+    _git("fetch", "--prune", "origin", cwd=klon)
+    gezaehlt = _git("rev-list", "--count", "HEAD..FETCH_HEAD", cwd=klon)
+    assert gezaehlt == "0" and _hinter_main(klon) == "1", (
+        "Ohne Refspec rechnet `HEAD..FETCH_HEAD` nicht mehr am Upstream des "
+        f"Zweigs vorbei: gezaehlt {gezaehlt}, hinter `main` "
+        f"{_hinter_main(klon)}. Erwartet waren 0 und 1."
+    )
+
+    arbeitsplatz = tmp_path / "mit"
+    arbeitsplatz.mkdir()
+    klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=False)
+    _git("fetch", "--prune", "origin", "main", cwd=klon)
+    assert _git("rev-list", "--count", "HEAD..FETCH_HEAD", cwd=klon) == "1", (
+        "Mit Refspec zaehlt die Rechnung nicht gegen `main` — dann misst die "
+        "Zusicherung darueber nicht die Refspec, sondern einen immer falschen "
+        "Aufbau."
+    )
+
+
+def test_der_empfohlene_aufruf_tut_beides(tmp_path: pathlib.Path) -> None:
+    """Und der Aufruf, den CLAUDE.md daraus ableitet: raeumt *und* holt.
+
+    Die beiden Haelften sind oben je einzeln gemessen. Hier zusammen, weil
+    CLAUDE.md genau diese Kombination empfiehlt und eine Empfehlung, die
+    niemand nachrechnet, dieselbe Prosa ist wie die, gegen die diese Datei
+    gebaut wurde.
+    """
+    arbeitsplatz = tmp_path / "empfohlen"
+    arbeitsplatz.mkdir()
+    klon = _lage_mit_vorgezogenem_main(arbeitsplatz, zweig_loeschen=True)
+
+    _git("fetch", "--prune", "origin", cwd=klon)
+    _git("merge", "--ff-only", "origin/main", cwd=klon)
+
+    assert not _ref_existiert(klon), f"{_REF} steht noch — der Prune hat nicht gegriffen."
+    assert _hinter_main(klon) == "0", (
+        f"Der Klon liegt weiter {_hinter_main(klon)} Commits hinter `main` — "
+        "dann holt der empfohlene Aufruf nicht, was er holen soll."
+    )
+
+
+def test_die_anweisung_nennt_den_empfohlenen_aufruf_als_kode() -> None:
+    """Der Aufruf muss in CLAUDE.md stehen, und zwar in einem Kodeblock.
+
+    Gegenprobe zum Erkenner gleich mit: Ein Muster, das denselben Text im
+    Fliesstext gelten liesse, waere blind fuer den Fall, dass aus der
+    Empfehlung eine Nebenbemerkung wird.
+    """
+    assert _CLAUDE_MD.is_file(), "CLAUDE.md fehlt — der Test misst nichts."
+    assert _EMPFOHLEN in _kodeblock_zeilen(_CLAUDE_MD.read_text(encoding="utf-8")), (
+        f"CLAUDE.md nennt `{_EMPFOHLEN}` nicht mehr als Kodeblock-Zeile. Ohne "
+        "ihn empfiehlt die Anweisung entweder den Aufruf, der nicht prunt, "
+        "oder den, der `main` nicht holt."
+    )
+    assert _EMPFOHLEN not in _kodeblock_zeilen(f"Nebenbei: {_EMPFOHLEN} genuegt."), (
+        "Der Erkenner nimmt Fliesstext fuer einen Kodeblock — dann ist die "
+        "Zusicherung darueber immer gruen."
+    )
