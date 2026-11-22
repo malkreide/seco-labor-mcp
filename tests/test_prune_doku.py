@@ -367,3 +367,38 @@ def test_die_tabelle_stimmt_mit_dem_gemessenen_verhalten_ueberein(
             )
 
     assert not abweichungen, "Tabelle und git gehen auseinander:\n  " + "\n  ".join(abweichungen)
+
+
+def test_push_delete_raeumt_den_tracking_ref_gleich_mit(tmp_path: pathlib.Path) -> None:
+    """Die Nebenwirkung, an der die erste Nachstellung scheiterte.
+
+    `git push origin --delete <zweig>` loescht nicht nur den Zweig im Remote,
+    sondern entfernt im selben Zug den lokalen Tracking-Ref. Eine Probe, die
+    die Lage so herstellt, hat damit genau das Beobachtungsobjekt beseitigt —
+    danach sieht jeder Fetch gleich gut aus.
+
+    Deshalb baut `_lage_nach_dem_merge` serverseitig ab (`git update-ref -d` im
+    Bare-Repo). Diese Zusicherung haelt den Grund dafuer fest, statt ihn nur im
+    Docstring zu behaupten; CLAUDE.md nennt denselben Fall im Abschnitt «Tests».
+    """
+    fernab = tmp_path / "fernab.git"
+    klon = tmp_path / "klon"
+    _git("init", "--quiet", "--bare", str(fernab), cwd=tmp_path)
+    _git("init", "--quiet", "-b", "main", str(klon), cwd=tmp_path)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Basis", cwd=klon)
+    _git("remote", "add", "origin", str(fernab), cwd=klon)
+    _git("push", "--quiet", "origin", "main", cwd=klon)
+    _git("checkout", "--quiet", "-b", _ZWEIG, cwd=klon)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Arbeit", cwd=klon)
+    _git("push", "--quiet", "-u", "origin", _ZWEIG, cwd=klon)
+    _git("checkout", "--quiet", "main", cwd=klon)
+
+    assert _ref_existiert(klon), "Positivkontrolle: vor der Loeschung muss der Ref stehen."
+
+    _git("push", "--quiet", "origin", "--delete", _ZWEIG, cwd=klon)
+
+    assert not _ref_existiert(klon), (
+        f"`git push origin --delete` hat {_REF} stehen gelassen. Dann waere die "
+        "Begruendung fuer die serverseitige Loeschung in `_lage_nach_dem_merge` "
+        "hinfaellig — und der Absatz in CLAUDE.md zu korrigieren."
+    )

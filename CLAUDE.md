@@ -40,6 +40,41 @@ Zwei Fallen, die beide grün blieben:
   `asyncio` selbst und entschärft die Mechanik im ganzen Prozess. Patche
   einen Modul-Alias (`_sleep = asyncio.sleep`), nicht das fremde Modul.
 
+**Die Gegenprobe braucht selbst eine Kontrolle.** Zweimal hat hier eine Probe
+bestätigt statt gemessen, beide Male, weil sie nicht tat, was sie zu tun
+schien.
+
+Am 14.11.2026 sollte nachgestellt werden, ob `git fetch --prune origin main`
+einen veralteten Tracking-Ref stehen lässt. Die Probe löschte den
+Remote-Branch mit `git push origin --delete` aus demselben Klon — und das
+räumt den Tracking-Ref als Nebenwirkung gleich mit auf. Gemessen wurde danach
+ein Ref, der schon vor dem Fetch weg war; beide Aufrufe sahen gleich gut aus,
+und der Befund galt als widerlegt. Erst die Löschung im Remote selbst
+(`git update-ref -d` im Bare-Repo) stellte die Lage her.
+
+Am 22.11.2026 sollten sieben Verfälschungen einer Tabelle zeigen, dass ein
+neuer Test sie wirklich hält. Alle sieben blieben grün. Blind war nicht der
+Test, sondern das Bash-Gerüst: maskierte Backticks in doppelten
+Anführungszeichen, und die Ersetzung lief ins Leere. Mit einem Python-Gerüst
+ohne Zitierebene fiel jeder der sieben.
+
+Drei Handgriffe daraus:
+
+- **Erst prüfen, dass die Probe gegriffen hat, dann ihr Ergebnis lesen.** Eine
+  Ersetzung, die nichts ersetzt, ist still erfolgreich; ein
+  `assert text.count(alt) == 1` davor kostet nichts.
+- **Ein einheitliches Ergebnis über mehrere unabhängige Verfälschungen ist ein
+  Verdacht, keine Entwarnung.** Sieben grüne Proben in Folge messen eher das
+  Gerüst als die Sache — zumal dann, wenn derselbe Test eben noch richtig
+  gefallen ist.
+- **Eine Zitierebene weniger.** Patch-Skripte gehören in die Sprache, in der
+  auch die Zusicherung steht, nicht in eine Shell-Zeile mit maskierten
+  Sonderzeichen.
+
+Die Nebenwirkung von `git push origin --delete` ist gemessen und hängt an
+`tests/test_prune_doku.py`; der Absatz zum Prune-Fund weiter unten nennt
+denselben Fall von seiner Seite aus.
+
 Handgeschriebene Fixtures kodieren die Annahme des Autors und können sie
 nicht widerlegen. Mindestens eine aufgezeichnete Antwort pro externem
 Endpunkt, mit Aufnahmedatum.
