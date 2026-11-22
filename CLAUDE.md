@@ -40,6 +40,41 @@ Zwei Fallen, die beide grün blieben:
   `asyncio` selbst und entschärft die Mechanik im ganzen Prozess. Patche
   einen Modul-Alias (`_sleep = asyncio.sleep`), nicht das fremde Modul.
 
+**Die Gegenprobe braucht selbst eine Kontrolle.** Zweimal hat hier eine Probe
+bestätigt statt gemessen, beide Male, weil sie nicht tat, was sie zu tun
+schien.
+
+Am 14.11.2026 sollte nachgestellt werden, ob `git fetch --prune origin main`
+einen veralteten Tracking-Ref stehen lässt. Die Probe löschte den
+Remote-Branch mit `git push origin --delete` aus demselben Klon — und das
+räumt den Tracking-Ref als Nebenwirkung gleich mit auf. Gemessen wurde danach
+ein Ref, der schon vor dem Fetch weg war; beide Aufrufe sahen gleich gut aus,
+und der Befund galt als widerlegt. Erst die Löschung im Remote selbst
+(`git update-ref -d` im Bare-Repo) stellte die Lage her.
+
+Am 22.11.2026 sollten sieben Verfälschungen einer Tabelle zeigen, dass ein
+neuer Test sie wirklich hält. Alle sieben blieben grün. Blind war nicht der
+Test, sondern das Bash-Gerüst: maskierte Backticks in doppelten
+Anführungszeichen, und die Ersetzung lief ins Leere. Mit einem Python-Gerüst
+ohne Zitierebene fiel jeder der sieben.
+
+Drei Handgriffe daraus:
+
+- **Erst prüfen, dass die Probe gegriffen hat, dann ihr Ergebnis lesen.** Eine
+  Ersetzung, die nichts ersetzt, ist still erfolgreich; ein
+  `assert text.count(alt) == 1` davor kostet nichts.
+- **Ein einheitliches Ergebnis über mehrere unabhängige Verfälschungen ist ein
+  Verdacht, keine Entwarnung.** Sieben grüne Proben in Folge messen eher das
+  Gerüst als die Sache — zumal dann, wenn derselbe Test eben noch richtig
+  gefallen ist.
+- **Eine Zitierebene weniger.** Patch-Skripte gehören in die Sprache, in der
+  auch die Zusicherung steht, nicht in eine Shell-Zeile mit maskierten
+  Sonderzeichen.
+
+Die Nebenwirkung von `git push origin --delete` ist gemessen und hängt an
+`tests/test_prune_doku.py`; der Absatz zum Prune-Fund weiter unten nennt
+denselben Fall von seiner Seite aus.
+
 Handgeschriebene Fixtures kodieren die Annahme des Autors und können sie
 nicht widerlegen. Mindestens eine aufgezeichnete Antwort pro externem
 Endpunkt, mit Aufnahmedatum.
@@ -277,6 +312,21 @@ Branch-Ref nicht angefasst. Nachgestellt mit git 2.43.0 in einem
 Wegwerf-Repo — mit Refspec überlebt der Ref und die Voraus-Rechnung liest `1`,
 ohne Refspec ist er weg. Danach markiert `git status -sb` den Upstream als
 `[gone]`.
+
+**Die Konfiguration ersetzt den richtigen Aufruf nicht.** Naheliegend wäre,
+einmal `fetch.prune = true` zu setzen und den Aufruf danach nicht mehr zu
+beachten. Das trägt nicht: Die Option entscheidet, *ob* geprunt wird, nicht
+*was* der Prune abdeckt — die Refspec-Grenze gilt für sie genauso. Gemessen
+im selben Wegwerf-Repo:
+
+| | `git fetch origin main` | `git fetch origin` |
+|---|---|---|
+| ohne `fetch.prune` | Ref bleibt | Ref bleibt |
+| `fetch.prune = true` | Ref bleibt | Ref weg |
+
+Nutzlos ist sie damit nicht — sie macht aus einem gewöhnlichen Fetch einen,
+der aufräumt, und erspart den Schalter. Nur den Aufruf mit Refspec rettet sie
+nicht, und genau der war das Problem.
 
 Die erste Nachstellung zeigte das Gegenteil, und zwar aus einem Fehler der
 Probe: Sie löschte den Remote-Branch mit `git push origin --delete` aus
