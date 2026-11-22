@@ -402,3 +402,66 @@ def test_push_delete_raeumt_den_tracking_ref_gleich_mit(tmp_path: pathlib.Path) 
         "Begruendung fuer die serverseitige Loeschung in `_lage_nach_dem_merge` "
         "hinfaellig — und der Absatz in CLAUDE.md zu korrigieren."
     )
+
+
+def _lage_nach_dem_merge_ohne_loeschung(arbeitsplatz: pathlib.Path) -> pathlib.Path:
+    """Wie `_lage_nach_dem_merge`, nur loescht der Remote den Zweig NICHT.
+
+    Das ist der Fall vom 22.11.2026: GitHub liess den Zweig beim Merge stehen,
+    und der lokale Zweig wurde danach auf `main` vorgezogen. Der Tracking-Ref
+    ist hier also gueltig und nicht veraltet — der Unterschied, auf den es im
+    Absatz ankommt.
+    """
+    fernab = arbeitsplatz / "fernab.git"
+    klon = arbeitsplatz / "klon"
+    _git("init", "--quiet", "--bare", str(fernab), cwd=arbeitsplatz)
+    _git("init", "--quiet", "-b", "main", str(klon), cwd=arbeitsplatz)
+
+    _git("commit", "--quiet", "--allow-empty", "-m", "Basis", cwd=klon)
+    _git("remote", "add", "origin", str(fernab), cwd=klon)
+    _git("push", "--quiet", "origin", "main", cwd=klon)
+
+    _git("checkout", "--quiet", "-b", _ZWEIG, cwd=klon)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Arbeit", cwd=klon)
+    _git("push", "--quiet", "-u", "origin", _ZWEIG, cwd=klon)
+
+    _git("checkout", "--quiet", "main", cwd=klon)
+    _git("merge", "--quiet", "--no-ff", _ZWEIG, "-m", "Merge", cwd=klon)
+    _git("push", "--quiet", "origin", "main", cwd=klon)
+
+    # Kein `update-ref -d`: Der Zweig bleibt im Remote stehen.
+    _git("checkout", "--quiet", _ZWEIG, cwd=klon)
+    _git("merge", "--quiet", "--ff-only", "main", cwd=klon)
+    _git("fetch", "--prune", "origin", cwd=klon)
+    return klon
+
+
+def test_der_vorsprung_kann_der_merge_commit_selbst_sein(tmp_path: pathlib.Path) -> None:
+    """Die vierte Spielart der Hook-Meldung: Zahl richtig, Handlung falsch.
+
+    Der Tracking-Ref ist hier gueltig — der Remote fuehrt den Zweig weiterhin —,
+    und der lokale Zweig ist wirklich einen Commit voraus. Dieser eine Commit
+    ist aber der Merge-Commit, der bereits in `main` liegt.
+
+    Gehalten werden die drei Zahlen, an denen der Absatz die Faelle trennt: der
+    Zweig existiert im Remote, `origin/<zweig>..HEAD` liest `1`, und
+    `origin/main...HEAD` liest `0 0`. Die eine Zeile, die den Fall aufloest, ist
+    `merge-base --is-ancestor HEAD origin/main`.
+    """
+    klon = _lage_nach_dem_merge_ohne_loeschung(tmp_path)
+
+    assert _ZWEIG in _git("ls-remote", "--heads", "origin", cwd=klon), (
+        "Positivkontrolle: Hier soll der Remote den Zweig gerade NICHT "
+        "losgeworden sein — sonst misst dieser Test den veralteten Ref von oben."
+    )
+    assert _ref_existiert(klon), "Tracking-Ref fehlt — die Lage ist nicht hergestellt."
+
+    voraus = _git("rev-list", "--count", f"{_REF}..HEAD", cwd=klon)
+    assert voraus == "1", f"Erwartet war die Zahl des Hooks (1), gelesen: {voraus}"
+
+    gegen_main = _git("rev-list", "--left-right", "--count", "origin/main...HEAD", cwd=klon)
+    assert gegen_main.split() == ["0", "0"], (
+        f"Gegen `main` gerechnet muesste HEAD deckungsgleich sein, gelesen: {gegen_main}"
+    )
+
+    _git("merge-base", "--is-ancestor", "HEAD", "origin/main", cwd=klon)
