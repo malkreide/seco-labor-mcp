@@ -424,7 +424,7 @@ was seither an ihm gemessen wurde.
 
 **Die Befundlos-Meldung ist weg, die Statustabelle nicht.** Einen Lauf ohne
 Befund meldete Codex früher als gewöhnlichen Issue-Kommentar («Codex Review:
-Didn't find any major issues»). Auf den fünf befundlosen Läufen dieses Repos,
+Didn't find any major issues»). Auf den acht befundlosen Läufen dieses Repos,
 die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 *Review | Status | Commit | Review trigger* hinter dem Marker
 `<!-- codex-pull-request-review-summary -->`, auf «✅ Completed»:
@@ -436,12 +436,47 @@ die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 | #85 | 14.10.2026 | `5c82cc5` | leer | keiner |
 | #91 | 13.11.2026 | `6c0c7f4` | leer | keiner |
 | #92 | 13.11.2026 | `66db6f1` | leer | keiner |
+| #97 | 22.11.2026 | `63182a2` | leer | keiner |
+| #98 | 22.11.2026 | `8bf12af` | leer | keiner |
+| #99 | 22.11.2026 | `d87669e` | leer | keiner |
 
 Wer «geprüft und sauber» am Befundlos-Kommentar festmacht, findet ihn hier
-über neun Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
+über zehn Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
 Belastbar ist das Paar: Tabelle auf «Completed» **und** `get_reviews` leer.
 «Completed» allein sagt nur, dass ein Lauf stattfand — auf PR #73 stand es
 zur selben Minute wie ein P2-Befund im Review-Objekt.
+
+**Ein Lauf, der nicht stattfindet, meldet sich als gewöhnlicher Kommentar.** Am
+22.11.2026 um 18:42:35 UTC stand auf PR #100 statt des Statuskommentars dies,
+acht Sekunden nach dem Eröffnen des Entwurfs:
+
+```
+To use Codex here, [create an environment for this repo](...).
+```
+
+Kein `codex-pull-request-review-summary`, kein `codex-review-state:v1`, keine
+Statustabelle — und `get_reviews` leer. Es hat kein Lauf stattgefunden. Sieben
+Minuten vorher, auf #99, war derselbe Bot normal durchgelaufen.
+
+Das trifft die Regel darüber an ihrer schwächsten Stelle. `get_reviews` ist
+hier **leer wie bei allen acht befundlosen Läufen**; wer «sauber» an diesem
+einen Signal festmacht, bucht einen PR als geprüft, den niemand angesehen hat.
+Das Paar trägt, weil es die Tabelle verlangt — aber nur, wenn man deren Fehlen
+auch bemerkt. Fehlt sie, ist das Fehlen die Auskunft: **Kein Statuskommentar
+heisst nicht befundlos, sondern ungeprüft.**
+
+Dieselbe Klasse wie der 403, der sich als «Label nicht gefunden» ausgab: eine
+Störung, verpackt als Auskunft. Nur steckt die Verpackung hier nicht im
+Antworttext, sondern in dem, was gar nicht da ist.
+
+Was die Beobachtung **nicht** hergibt, ist der Grund. Die Meldung nennt keinen,
+und zwei Lesarten passen gleich gut. Entweder reagiert der Bot neu auch auf das
+Eröffnen eines Entwurfs und meldet dabei, dass er nicht laufen kann — #98 und
+#99 bekamen als Entwurf keinen Kommentar, #100 acht Sekunden nach dem Eröffnen
+einen. Oder in den sieben Minuten zwischen #99 und #100 hat sich an der
+Codex-Einrichtung etwas geändert. Welche zutrifft, ist ungemessen; die
+Einstellungen liegen nicht in diesem Repo, und dem Link in der Meldung zu
+folgen wäre eine Änderung daran, keine Messung.
 
 **Seit dem 13.11.2026 sagt es ein Marker direkt.** Der Statuskommentar auf
 #91 trägt neben dem bekannten `codex-pull-request-review-summary` einen
@@ -464,8 +499,8 @@ Mitgewandert ist die Darstellung: Der Kommentar steckt jetzt in einem
 Zweimal hat die Form damit in zwei Monaten gewechselt. Wer seine Prüfung an
 einen Text bindet statt an ein Feld, baut sie jedes Mal neu.
 
-Was die fünf Messungen **nicht** hergeben: dass der Kommentar abgeschafft
-wäre. Fünf Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
+Was die acht Messungen **nicht** hergeben: dass der Kommentar abgeschafft
+wäre. Acht Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
 auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 
 **Die Laufzeit taugt nicht als Wartezeit.** Derselbe Statuskommentar, von
@@ -479,9 +514,16 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 | #85 | 14.10.2026 | 06:52:58 | 06:53:56 | 58 s |
 | #91 | 13.11.2026 | 14:01:54 | 14:02:53 | 59 s |
 | #92 | 13.11.2026 | 16:26:07 | 16:27:03 | 56 s |
+| #97 | 22.11.2026 | 09:44:13 | 09:45:14 | 1 min 01 s |
+| #98 | 22.11.2026 | 18:13:36 | 18:14:28 | 52 s |
+| #99 | 22.11.2026 | 18:34:42 | 18:35:41 | 59 s |
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
-etwas geändert hätte. Eine Regel wie «vier Minuten warten, dann ist es
+etwas geändert hätte. Sieben der acht Läufe liegen dabei zwischen 47 s und
+1 min 01 s; die ganze Spanne entsteht aus #73 allein. Diese Häufung ist keine
+Zusage, sondern die Versuchung: Gerade weil sieben Messungen so eng
+beieinanderliegen, liest sich die achte wie eine Regel — und #73 zeigt, dass
+es keine ist. Eine Regel wie «vier Minuten warten, dann ist es
 sicher» ist daraus nicht zu bauen; gelesen wird der Status, nicht die Uhr.
 
 Dass die Tabelle **in place** aktualisiert wird, macht beide Messungen erst
@@ -492,7 +534,7 @@ Marker stand um 16:26:07 noch `"status":"running"` mit
 `has_any_findings: null`, um 16:27:03 dann `"completed"` mit `false` — gleiche
 Kommentar-ID, unverändertes `created_at`.
 
-**Und fünfmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+**Und achtmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
 Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
 Erscheinen bis zum Urteil:
 
@@ -503,12 +545,16 @@ Erscheinen bis zum Urteil:
 | #85 | 06:52:49 | 06:52:58 | 06:53:56 | 1 min 07 s |
 | #91 | 14:01:45 | 14:01:54 | 14:02:53 | 1 min 08 s |
 | #92 | 16:25:55 | 16:26:07 | 16:27:03 | 1 min 08 s |
+| #97 | 09:44:11 | 09:44:13 | 09:45:14 | 1 min 03 s |
+| #98 | 18:13:30 | 18:13:36 | 18:14:28 | 58 s |
+| #99 | 18:34:39 | 18:34:42 | 18:35:41 | 1 min 02 s |
 
 Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
-wurde. Auf #75, #85, #91 und #92 war der Kommentar zum Merge-Zeitpunkt noch
-gar nicht da — sechs, neun, neun und zwölf Sekunden fehlten ihm. Auf #92 lag
-der Merge sogar sieben Sekunden vor dem *Start* des Laufs: Es gab zum
-Merge-Zeitpunkt nichts anzusehen, auch nicht für den, der hinsieht.
+wurde. In den anderen sieben Fällen war der Kommentar zum Merge-Zeitpunkt noch
+gar nicht da — #75, #85, #91, #92, #97, #98 und #99 fehlten ihm zwischen zwei
+und zwölf Sekunden. Auf #92 und #99 lag der Merge sogar vor dem *Start* des
+Laufs, sieben beziehungsweise eine Sekunde: Es gab zum Merge-Zeitpunkt nichts
+anzusehen, auch nicht für den, der hinsieht.
 
 Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
 Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
@@ -517,15 +563,24 @@ DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
 falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
 den geschlossenen PR wäre er in `main` liegengeblieben.
 
-Für #75, #85, #91 und #92 ist **nicht** bekannt, ob es etwas zu finden gab;
-alle vier Läufe blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+Für die anderen sieben ist **nicht** bekannt, ob es etwas zu finden gab;
+alle blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
 dieselbe.
 
-Zwei Handgriffe daraus:
+Drei Handgriffe daraus:
 
 - **Vor dem Merge auf den Status sehen, nicht auf die Uhr.** Dieselbe Regel
   wie oben, mit dem Zusatz, dass sie vorher gilt und nicht nachher: Eine
   Tabelle auf «Running» ist eine Aufforderung zu warten.
+- **Der Status muss dafür erst existieren.** Auf #99 lagen zwischen «ready»
+  und Merge zwei Sekunden, und der Statuskommentar erschien drei Sekunden
+  *nach* dem Merge. Der Handgriff darüber ist in diesem Ablauf also nicht
+  anwendbar — wer den Draft auf «ready» setzt und gleich mergt, hat nichts,
+  worauf er sehen könnte; die Aufforderung zu warten kommt zu spät, um
+  gelesen zu werden. Zwei Wege wären denkbar: zwischen «ready» und Merge eine
+  Minute verstreichen lassen, oder den Review mit `@codex review` auf dem
+  offenen PR anstossen, statt ihn am Umschalten hängen zu lassen. Gemessen ist
+  keiner von beiden — welcher trägt, ist offen.
 - **Ein geschlossener PR ist kein Grund, nicht mehr hinzusehen.** Der Lauf
   läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
 
