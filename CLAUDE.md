@@ -278,6 +278,21 @@ Wegwerf-Repo — mit Refspec überlebt der Ref und die Voraus-Rechnung liest `1`
 ohne Refspec ist er weg. Danach markiert `git status -sb` den Upstream als
 `[gone]`.
 
+**Die Konfiguration ersetzt den richtigen Aufruf nicht.** Naheliegend wäre,
+einmal `fetch.prune = true` zu setzen und den Aufruf danach nicht mehr zu
+beachten. Das trägt nicht: Die Option entscheidet, *ob* geprunt wird, nicht
+*was* der Prune abdeckt — die Refspec-Grenze gilt für sie genauso. Gemessen
+im selben Wegwerf-Repo:
+
+| | `git fetch origin main` | `git fetch origin` |
+|---|---|---|
+| ohne `fetch.prune` | Ref bleibt | Ref bleibt |
+| `fetch.prune = true` | Ref bleibt | Ref weg |
+
+Nutzlos ist sie damit nicht — sie macht aus einem gewöhnlichen Fetch einen,
+der aufräumt, und erspart den Schalter. Nur den Aufruf mit Refspec rettet sie
+nicht, und genau der war das Problem.
+
 Die erste Nachstellung zeigte das Gegenteil, und zwar aus einem Fehler der
 Probe: Sie löschte den Remote-Branch mit `git push origin --delete` aus
 demselben Klon, und das räumt den Tracking-Ref als Nebenwirkung gleich mit

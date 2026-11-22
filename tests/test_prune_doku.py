@@ -249,3 +249,24 @@ def test_fetch_prune_true_ersetzt_den_richtigen_aufruf_nicht(tmp_path: pathlib.P
         "waere die Konfiguration ein Ausweg und der Absatz in CLAUDE.md "
         "unvollstaendig."
     )
+
+
+def test_fetch_prune_true_raeumt_den_aufruf_ohne_refspec_auf(tmp_path: pathlib.Path) -> None:
+    """Die andere Haelfte der Tabelle: nutzlos ist die Option naemlich nicht.
+
+    Ohne sie laesst ein gewoehnliches `git fetch origin` den Ref stehen; mit
+    ihr raeumt derselbe Aufruf ihn weg, ohne dass `--prune` dabeistehen muss.
+    Die Option entscheidet also ueber das *Ob*, die Refspec ueber das *Was* —
+    und nur diese zweite Grenze ist die Falle.
+
+    Ohne diese Zusicherung liesse der Test daneben sich auch so lesen, als
+    bewirke `fetch.prune` ueberhaupt nichts. Das waere die falsche Lehre.
+    """
+    klon = _lage_nach_dem_merge(tmp_path)
+    _git("config", "fetch.prune", "true", cwd=klon)
+    _git("fetch", "origin", cwd=klon)
+
+    assert not _ref_existiert(klon), (
+        "Mit `fetch.prune = true` hat `git fetch origin` {REF} stehen lassen. "
+        "Dann stimmt die Tabelle in CLAUDE.md nicht."
+    ).replace("{REF}", _REF)
