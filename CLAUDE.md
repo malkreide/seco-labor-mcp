@@ -644,6 +644,36 @@ Vier Handgriffe daraus:
 - **Ein geschlossener PR ist kein Grund, nicht mehr hinzusehen.** Der Lauf
   läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
 
+**Die Reihe ist geschlossen.** Zwölf Läufe sind gemessen. Die ersten acht haben
+die drei Befunde dieses Abschnitts getragen — die abwesende Befundlos-Meldung,
+die untaugliche Laufzeit, das Urteil nach dem Merge. Die neunte bis zwölfte
+haben je eine Zahl verschoben und sonst bestätigt, was schon dastand. Damit
+wächst die Reihe schneller als ihr Erkenntniswert, und eine dreizehnte Zeile
+wäre vor allem Pflege.
+
+Ab hier wird deshalb nur noch nachgetragen, was **abweicht**:
+
+- ein Lauf mit Befund;
+- ein Lauf, der eine Grenze verschiebt — über das Band hinaus, unter die
+  untere Kante, oder die Spanne zwischen Merge und Erscheinen des Kommentars
+  über dreizehn Sekunden;
+- eine Form, die hier nicht steht: ein Urteil *vor* dem Merge, ein
+  Befundlos-Kommentar, ein Statuskommentar ohne Marker, eine Absage wie die
+  auf #100.
+
+Was dagegenspricht, und es ist nicht wenig: Eine Reihe, die nur Abweichungen
+aufnimmt, verliert ihren Nenner. Wer später liest, dass neun von elf Läufen im
+Band lagen, kann nicht wissen, wie viele Läufe seither unauffällig waren — die
+Quote wird unlesbar, während die Spannen weiter stimmen. Wer den Nenner
+braucht, zählt ihn neu.
+
+Als erste Anwendung dieser Regel ist **#103 nicht eingetragen**, obwohl
+gemessen: Merge 05:29:16, Kommentar 05:29:22, Urteil 05:30:15, Laufzeit 53 s,
+befundlos. Alles im Band, alles in der Spanne, keine neue Form — nur der
+Abstand zum Lauf-Start war mit zwei Sekunden der knappste der Reihe, und auch
+das ist keine neue Form, sondern deren siebte Instanz. Die Zahlen stehen hier,
+damit niemand die Reihe für bei #102 abgebrochen hält.
+
 ### Wenn zwei Agenten dasselbe tun
 
 Vor dem Anlegen eines Branches mit vorgegebenem Namen prüfen, ob es ihn schon

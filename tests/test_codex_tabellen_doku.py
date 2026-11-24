@@ -498,3 +498,106 @@ def test_der_nicht_lauf_stoert_den_spaeteren_lauf_nicht() -> None:
 
     # Positivkontrolle: Ohne den nachgeholten Lauf bleibt es «kein Lauf».
     assert _codex_zustand([_KOMMENTAR_KEIN_LAUF], []) == "kein Lauf"
+
+
+# ----------------------------------------------------------------------------
+# Der Abschluss der Reihe (24.11.2026)
+#
+# Ab #103 nimmt der Abschnitt nur noch Abweichungen auf. Die Regel selbst ist
+# ein Urteil und nicht pruefbar; pruefbar ist die eine Behauptung, auf der sie
+# zuerst angewendet wurde: dass #103 keine Abweichung war. Genau die wird hier
+# gegen die Tabellen gerechnet, die der Abschnitt fuehrt.
+# ----------------------------------------------------------------------------
+
+_ABSCHLUSS = re.compile(
+    r"\*\*#(?P<pr>\d+) nicht eingetragen\*\*, obwohl gemessen: "
+    r"Merge (?P<merge>\d\d:\d\d:\d\d), "
+    r"Kommentar (?P<kommentar>\d\d:\d\d:\d\d), "
+    r"Urteil (?P<urteil>\d\d:\d\d:\d\d), "
+    r"Laufzeit (?P<dauer>[^,]+), "
+    r"befundlos\."
+)
+
+
+def _abschlussfall() -> dict[str, str]:
+    """Den nicht eingetragenen Lauf aus dem Fliesstext lesen.
+
+    Der Text wird vor dem Suchen auf einfache Leerzeichen normalisiert, weil
+    der Satz ueber mehrere Zeilen umgebrochen ist. Findet der Erkenner nichts,
+    ist das ein Fehlschlag und kein leeres Ergebnis — sonst liefe die
+    Zusicherung darunter leer durch.
+    """
+    roh = " ".join(_CLAUDE_MD.read_text(encoding="utf-8").split())
+    treffer = _ABSCHLUSS.search(roh)
+    assert treffer, (
+        "Der Satz zum nicht eingetragenen Lauf steht nicht mehr in der Form, "
+        "die dieser Test liest. Erwartet wird: «**#N nicht eingetragen**, "
+        "obwohl gemessen: Merge hh:mm:ss, Kommentar hh:mm:ss, Urteil "
+        "hh:mm:ss, Laufzeit … , befundlos.»"
+    )
+    return treffer.groupdict()
+
+
+def _spanne_merge_bis_kommentar() -> tuple[int, int]:
+    """Kleinster und groesster Abstand Merge -> Erscheinen, aus der Tabelle.
+
+    Negative Abstaende bleiben draussen: Auf #73 war der Kommentar schon da,
+    als gemergt wurde, und dieser Fall ist im Text eigens als andere Form
+    beschrieben.
+    """
+    abstaende = [
+        _sek(z["Kommentar erscheint"]) - _sek(z["Merge"])
+        for z in _tabelle(_MERGE)
+        if _sek(z["Kommentar erscheint"]) > _sek(z["Merge"])
+    ]
+    assert abstaende, "Kein positiver Abstand in der Merge-Tabelle."
+    return min(abstaende), max(abstaende)
+
+
+def test_der_erkenner_findet_den_abschlussfall() -> None:
+    """Kontrolle vor der Messung — und die Zahlen muessen aufgehen.
+
+    Die Laufzeit im Satz ist aus Kommentar und Urteil ausgerechnet, genau wie
+    die Spalten der Tabellen. Stimmt sie nicht, ist der Satz falsch, bevor er
+    ueberhaupt eingeordnet wird.
+    """
+    fall = _abschlussfall()
+    gerechnet = _sek(fall["urteil"]) - _sek(fall["kommentar"])
+    assert gerechnet == _dauer_sek(fall["dauer"]), (
+        f"#{fall['pr']}: {fall['kommentar']} bis {fall['urteil']} sind "
+        f"{gerechnet} s, der Satz sagt «{fall['dauer']}»"
+    )
+    assert _sek(fall["urteil"]) > _sek(fall["merge"]), (
+        f"#{fall['pr']}: Das Urteil liegt nicht nach dem Merge — dann ist der "
+        "Lauf sehr wohl eine Abweichung und gehoert in die Tabellen."
+    )
+
+
+def test_der_abschlussfall_ist_wirklich_keine_abweichung() -> None:
+    """Die eigentliche Zusicherung: «Alles im Band, alles in der Spanne».
+
+    Gemessen gegen die Tabellen, nicht gegen eine Wiederholung des Satzes.
+    Faellt dieser Test, dann war der Lauf eine Abweichung und haette nach der
+    eigenen Regel des Abschnitts eingetragen werden muessen — der Satz ist
+    dann zu streichen, nicht die Zusicherung zu lockern.
+    """
+    fall = _abschlussfall()
+    dauer = _dauer_sek(fall["dauer"])
+    assert _ENG_VON <= dauer <= _ENG_BIS, (
+        f"#{fall['pr']} liegt mit {dauer} s ausserhalb des Bandes "
+        f"({_ENG_VON}–{_ENG_BIS} s) — das ist eine Abweichung."
+    )
+
+    dauern = [_dauer_sek(z["Dauer"]) for z in _tabelle(_LAUFZEIT)]
+    assert dauer > min(dauern), (
+        f"#{fall['pr']} liegt mit {dauer} s auf oder unter der unteren Kante "
+        f"({min(dauern)} s) — dann verschiebt der Lauf eine Grenze und der "
+        "Satz zur Kante stimmt nicht mehr."
+    )
+
+    abstand = _sek(fall["kommentar"]) - _sek(fall["merge"])
+    von, bis = _spanne_merge_bis_kommentar()
+    assert von <= abstand <= bis, (
+        f"#{fall['pr']}: Der Abstand Merge bis Kommentar ({abstand} s) liegt "
+        f"ausserhalb der Spanne der Tabelle ({von}–{bis} s) — eine Abweichung."
+    )
