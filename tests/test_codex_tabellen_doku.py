@@ -233,9 +233,13 @@ def test_die_haeufung_und_der_ausreisser_stimmen() -> None:
         f"{_ENG_BIS} s: {sorted(eng.items(), key=lambda paar: paar[1])}"
     )
     text = _CLAUDE_MD.read_text(encoding="utf-8")
-    assert f"Sieben der {_ZAHLWORT[len(dauern)]} Läufe liegen dabei zwischen" in text, (
+    satz = (
+        f"{_ZAHLWORT[len(eng)].capitalize()} der {_ZAHLWORT[len(dauern)]} "
+        "Läufe liegen dabei zwischen"
+    )
+    assert satz in text, (
         f"Der Text nennt nicht {_ZAHLWORT[len(eng)]} eng liegende Laeufe von "
-        f"{_ZAHLWORT[len(dauern)]}."
+        f"{_ZAHLWORT[len(dauern)]}. Erwartet war: «{satz} …»"
     )
 
 
@@ -294,6 +298,26 @@ _KOMMENTAR_KEIN_LAUF = (
     "To use Codex here, [create an environment for this repo]"
     "(https://chatgpt.com/codex/cloud/settings/environments)."
 )
+
+# PR #100, abgefragt am 22.11.2026 um 19:03 UTC. Derselbe Head wie der
+# Nicht-Lauf darueber — siebzehn Minuten spaeter, Ausloeser «Draft marked
+# ready». Diese Aufzeichnung ist der Grund, warum die zweite Lesart im Absatz
+# von CLAUDE.md gestrichen ist: An der Codex-Einrichtung war nichts kaputt.
+_KOMMENTAR_NACHGEHOLT = """<!-- codex-pull-request-review-summary -->
+<!-- codex-review-state:v1 {"code_review":{"commit_sha":"f279973d4e657e2aeef1\
+d018e4aee840079436d5","has_any_findings":false,"has_unresolved_findings":false,\
+"status":"completed"},"security_review":{"commit_sha":null,"has_any_findings":\
+null,"has_unresolved_findings":null,"status":null}} -->
+
+<details>
+<summary><strong>Codex Review Summary</strong>: \u2705 Completed</summary>
+
+| Review | Status | Commit | Review trigger |
+| --- | --- | --- | --- |
+| \U0001f4dd **Code Review** | \u2705 **Completed** 2026-11-22T19:00:37.765915Z \
+| `f279973` | Draft marked ready |
+
+</details>"""
 
 _MARKER_TABELLE = "<!-- codex-pull-request-review-summary -->"
 _MARKER_ZUSTAND = "<!-- codex-review-state:v1"
@@ -397,3 +421,26 @@ def test_die_anweisung_nennt_das_fehlen_als_auskunft() -> None:
         "Auskunft ist. Ohne diesen Satz bleibt nur das Paar von oben, und das "
         "sieht auf PR #100 wie ein sauberer Lauf aus."
     )
+
+
+def test_der_nicht_lauf_stoert_den_spaeteren_lauf_nicht() -> None:
+    """Beide Kommentare von PR #100 zusammen, wie sie dort wirklich stehen.
+
+    Der Zustand ist eine Eigenschaft des Statuskommentars, nicht des PR: Auf
+    demselben Head stand erst die Absage und siebzehn Minuten spaeter ein
+    regulaerer, befundloser Lauf. Ein Erkenner, der den ersten Kommentar
+    nimmt oder sich an ihm verschluckt, laese den PR fuer immer als ungeprueft.
+
+    Das ist zugleich die Aufzeichnung, die die zweite Lesart im Absatz
+    widerlegt hat — gaebe es sie nicht, stuende dort noch eine Vermutung ueber
+    die Codex-Einrichtung.
+    """
+    beide = [_KOMMENTAR_KEIN_LAUF, _KOMMENTAR_NACHGEHOLT]
+    assert _codex_zustand(beide, []) == "befundlos"
+
+    # Und in der anderen Reihenfolge ebenso: Die Liste der Kommentare ist
+    # nach Alter sortiert, aber darauf soll sich der Erkenner nicht stuetzen.
+    assert _codex_zustand(list(reversed(beide)), []) == "befundlos"
+
+    # Positivkontrolle: Ohne den nachgeholten Lauf bleibt es «kein Lauf».
+    assert _codex_zustand([_KOMMENTAR_KEIN_LAUF], []) == "kein Lauf"
