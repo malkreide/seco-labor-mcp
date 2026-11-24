@@ -108,6 +108,17 @@ def _dauer_sek(text: str) -> int:
     return (int(minuten) if minuten else 0) * 60 + int(sekunden)
 
 
+def _dauer_text(sekunden: int) -> str:
+    """Sekunden zurueck in die Schreibweise der Tabelle.
+
+    Gebraucht, um die im Fliesstext genannten Ausreisser samt Dauer gegen die
+    Tabelle zu halten. Unter einer Minute schreibt die Tabelle nur Sekunden.
+    """
+    if sekunden < 60:
+        return f"{sekunden} s"
+    return f"{sekunden // 60} min {sekunden % 60:02d} s"
+
+
 def test_der_erkenner_liest_beide_dauerformen() -> None:
     """Gegenprobe zum Erkenner, bevor er etwas behauptet."""
     assert _dauer_sek("47 s") == 47
@@ -119,6 +130,13 @@ def test_der_erkenner_liest_beide_dauerformen() -> None:
         except AssertionError:
             continue
         raise AssertionError(f"«{kaputt}» haette nicht gelesen werden duerfen.")
+
+    # Und zurueck, in beiden Formen. Ohne diese Kontrolle koennte der
+    # Rueckwandler unten jede Dauer als nicht-genannt melden.
+    for text in ("47 s", "1 min 01 s", "1 min 20 s", "3 min 11 s"):
+        assert _dauer_text(_dauer_sek(text)) == text, (
+            f"Hin und zurueck ergibt nicht «{text}», sondern «{_dauer_text(_dauer_sek(text))}»."
+        )
 
 
 def test_die_laufzeiten_rechnen_sich_aus_start_und_ende() -> None:
@@ -227,11 +245,17 @@ def test_die_haeufung_und_der_ausreisser_stimmen() -> None:
         "«Faktor vier» im Text stimmt dann nicht mehr."
     )
 
-    eng = {pr: s for pr, s in dauern.items() if pr != _AUSREISSER}
-    assert all(_ENG_VON <= s <= _ENG_BIS for s in eng.values()), (
-        f"Nicht alle uebrigen Laeufe liegen zwischen {_ENG_VON} s und "
-        f"{_ENG_BIS} s: {sorted(eng.items(), key=lambda paar: paar[1])}"
+    # Die Gruppe wird aus dem Band gerechnet, nicht aus «alle ausser dem
+    # Ausreisser»: Seit #101 (1 min 20 s) liegt mehr als ein Lauf darueber, und
+    # eine Zusicherung, die genau einen annimmt, waere beim naechsten Nachtrag
+    # wieder die Behauptung, die sie pruefen soll.
+    eng = {pr: s for pr, s in dauern.items() if _ENG_VON <= s <= _ENG_BIS}
+    drueber = sorted(
+        ((pr, s) for pr, s in dauern.items() if s > _ENG_BIS),
+        key=lambda paar: paar[1],
     )
+    assert eng, f"Kein Lauf liegt zwischen {_ENG_VON} s und {_ENG_BIS} s."
+
     text = _CLAUDE_MD.read_text(encoding="utf-8")
     satz = (
         f"{_ZAHLWORT[len(eng)].capitalize()} der {_ZAHLWORT[len(dauern)]} "
@@ -240,6 +264,16 @@ def test_die_haeufung_und_der_ausreisser_stimmen() -> None:
     assert satz in text, (
         f"Der Text nennt nicht {_ZAHLWORT[len(eng)]} eng liegende Laeufe von "
         f"{_ZAHLWORT[len(dauern)]}. Erwartet war: «{satz} …»"
+    )
+
+    fehlend = [
+        f"{pr} mit {_dauer_text(s)}"
+        for pr, s in drueber
+        if f"{pr} mit {_dauer_text(s)}" not in text
+    ]
+    assert not fehlend, (
+        "Der Text nennt die Laeufe oberhalb des Bandes nicht so, wie die "
+        f"Tabelle sie fuehrt. Nicht gefunden: {fehlend}"
     )
 
 
