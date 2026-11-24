@@ -554,11 +554,12 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
 etwas geändert hätte. Acht der zehn Läufe liegen dabei zwischen 47 s und
-1 min 01 s; darüber liegen nur #101 mit 1 min 20 s und #73 mit 3 min 11 s. Diese Häufung ist keine
-Zusage, sondern die Versuchung: Gerade weil so viele Messungen so eng
-beieinanderliegen, liest sich die nächste wie eine Regel — und #73 zeigt, dass
-es keine ist. Eine Regel wie «vier Minuten warten, dann ist es
-sicher» ist daraus nicht zu bauen; gelesen wird der Status, nicht die Uhr.
+1 min 01 s; darüber liegen nur #101 mit 1 min 20 s und #73 mit 3 min 11 s.
+Diese Häufung ist keine Zusage, sondern die Versuchung: Gerade weil so viele
+Messungen so eng beieinanderliegen, liest sich die nächste wie eine Regel —
+und #73 zeigt, dass es keine ist. Eine Regel wie «vier Minuten warten, dann
+ist es sicher» ist daraus nicht zu bauen; gelesen wird der Status, nicht die
+Uhr.
 
 Dass die Tabelle **in place** aktualisiert wird, macht beide Messungen erst
 möglich und eine einzelne Abfrage zugleich wertlos: `created_at` bleibt
@@ -589,8 +590,8 @@ Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
 wurde. In den anderen neun Fällen war der Kommentar zum Merge-Zeitpunkt noch
 gar nicht da — #75, #85, #91, #92, #97, #98, #99, #100 und #101 fehlten ihm
 zwischen zwei und zwölf Sekunden. Auf #92, #99, #100 und #101 lag der Merge
-sogar vor dem *Start* des Laufs — sieben, eine, sieben und fünf Sekunden: Es gab zum Merge-Zeitpunkt nichts
-anzusehen, auch nicht für den, der hinsieht.
+sogar vor dem *Start* des Laufs — sieben, eine, sieben und fünf Sekunden: Es
+gab zum Merge-Zeitpunkt nichts anzusehen, auch nicht für den, der hinsieht.
 
 Was das kostet, ist zweimal belegt. Auf #73 reichte Codex um 03:56:18 ein
 Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
@@ -608,12 +609,12 @@ des Befunds schon in `main`; korrigiert wurde er im Folge-PR. Zweimal also,
 und beide Male traf der nachgereichte Befund genau die Stelle, die der
 gemergte PR gerade behandelte.
 
-Für die anderen acht ist **nicht** bekannt, ob es etwas zu finden gab;
-alle blieben befundlos. Befunde gab es damit auf #73 und #101 — beide nach
-dem Merge. Das ist Glück, keine Entwarnung — die Reihenfolge war
-dieselbe.
+Für die anderen acht ist **nicht** bekannt, ob es etwas zu finden gab; alle
+blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+dieselbe. Befunde gab es bisher auf #73 und #101, und beide kamen nach dem
+Merge.
 
-Drei Handgriffe daraus:
+Vier Handgriffe daraus:
 
 - **Vor dem Merge auf den Status sehen, nicht auf die Uhr.** Dieselbe Regel
   wie oben, mit dem Zusatz, dass sie vorher gilt und nicht nachher: Eine
