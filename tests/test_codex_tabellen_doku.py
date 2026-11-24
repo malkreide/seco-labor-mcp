@@ -276,6 +276,26 @@ def test_die_haeufung_und_der_ausreisser_stimmen() -> None:
         f"Tabelle sie fuehrt. Nicht gefunden: {fehlend}"
     )
 
+    # Die untere Kante. Seit #102 ist sie zweimal getroffen, und das ist die
+    # eigentliche Stuetze des Absatzes: Nicht die Breite des Bandes macht es
+    # zur Versuchung, sondern dass seine Raender mehrfach genau getroffen
+    # werden.
+    kleinste = min(dauern.values())
+    unten = sorted(
+        (pr for pr, s in dauern.items() if s == kleinste),
+        key=lambda pr: int(pr.lstrip("#")),
+    )
+    assert len(unten) == 2, (
+        f"Die untere Kante treffen jetzt {len(unten)} Laeufe ({unten}) — dann "
+        "ist der Satz dazu in CLAUDE.md umzuschreiben, nicht diese Zusicherung "
+        "zu lockern."
+    )
+    kante = (
+        f"Die untere Kante ist zweimal getroffen: {unten[0]} und {unten[1]} "
+        f"liegen beide bei {_dauer_text(kleinste)}."
+    )
+    assert kante in text, f"In CLAUDE.md nicht gefunden: «{kante}»"
+
 
 # ----------------------------------------------------------------------------
 # Der Fund vom 22.11.2026: ein Lauf, der nicht stattfand
