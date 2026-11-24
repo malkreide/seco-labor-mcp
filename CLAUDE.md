@@ -473,14 +473,27 @@ Antworttext, sondern in dem, was gar nicht da ist.
 **Siebzehn Minuten später lief derselbe Bot auf demselben Head.** #100 wurde um
 18:59:29 auf «ready» gesetzt; der Lauf startete um 18:59:38, der
 Statuskommentar erschien um 18:59:43, und um 19:00:38 stand das Urteil —
-befundlos, Commit `f279973`, derselbe wie bei der Absage. Die Meldung hing also
-am **Auslöser**, nicht am Repo: Das Eröffnen eines Entwurfs bekommt sie, das
-Umschalten auf «ready» einen regulären Lauf.
+befundlos, Commit `f279973`, derselbe wie bei der Absage.
 
-Hier standen zuerst zwei Lesarten, und die zweite — in den sieben Minuten
-zwischen #99 und #100 habe sich an der Codex-Einrichtung etwas geändert — ist
-damit widerlegt. Sie war nicht nötig, und sie hätte in die falsche Richtung
-geschickt: zu den Einstellungen, wo nichts kaputt war.
+**Was diese Messung hergibt, und was nicht.** Sie zeigt, dass der Head um
+18:59 prüfbar war. Sie zeigt *nicht*, warum es um 18:42 nicht ging. Hier stand
+zuerst, die zweite Lesart — in den sieben Minuten dazwischen habe sich an der
+Codex-Einrichtung etwas geändert — sei damit widerlegt, und an den
+Einstellungen sei nichts kaputt gewesen. Das war überdehnt: Die Einstellungen
+liegen ausserhalb des Repos und sind veränderlich. Zwischen den beiden
+Zeitpunkten kann eine Umgebung angelegt worden sein, oder ein vorübergehender
+Zustand kann sich aufgelöst haben — beides passt zu derselben Beobachtung.
+Offen bleiben damit drei Lesarten: der Auslöser, eine Änderung an den
+Einstellungen, oder ein Zustand, der von selbst ging.
+
+Für den **Auslöser** spricht, dass #98 und #99 als Entwurf gar keinen
+Kommentar bekamen, #100 aber acht Sekunden nach dem Eröffnen einen. Das ist
+ein Indiz und kein Beweis; es trennt die drei Lesarten nicht.
+
+Aufgefallen ist die Überdehnung nicht beim Schreiben, sondern durch einen
+Codex-Review auf PR #101 — eingereicht 1 min 26 s **nach** dem Merge desselben
+PR, also genau in der Reihenfolge, die der Abschnitt darunter vermisst. Der
+Satz stand zu diesem Zeitpunkt schon in `main`.
 
 Ungemessen bleibt, **warum** das Eröffnen eines Entwurfs überhaupt eine Absage
 auslöst, wo #98 und #99 als Entwurf gar keinen Kommentar bekamen. Dass die
@@ -537,10 +550,11 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 | #98 | 22.11.2026 | 18:13:36 | 18:14:28 | 52 s |
 | #99 | 22.11.2026 | 18:34:42 | 18:35:41 | 59 s |
 | #100 | 22.11.2026 | 18:59:43 | 19:00:38 | 55 s |
+| #101 | 24.11.2026 | 03:44:51 | 03:46:11 | 1 min 20 s |
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
-etwas geändert hätte. Acht der neun Läufe liegen dabei zwischen 47 s und
-1 min 01 s; die ganze Spanne entsteht aus #73 allein. Diese Häufung ist keine
+etwas geändert hätte. Acht der zehn Läufe liegen dabei zwischen 47 s und
+1 min 01 s; darüber liegen nur #101 mit 1 min 20 s und #73 mit 3 min 11 s. Diese Häufung ist keine
 Zusage, sondern die Versuchung: Gerade weil so viele Messungen so eng
 beieinanderliegen, liest sich die nächste wie eine Regel — und #73 zeigt, dass
 es keine ist. Eine Regel wie «vier Minuten warten, dann ist es
@@ -554,7 +568,7 @@ Marker stand um 16:26:07 noch `"status":"running"` mit
 `has_any_findings: null`, um 16:27:03 dann `"completed"` mit `false` — gleiche
 Kommentar-ID, unverändertes `created_at`.
 
-**Und neunmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+**Und zehnmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
 Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
 Erscheinen bis zum Urteil:
 
@@ -569,23 +583,34 @@ Erscheinen bis zum Urteil:
 | #98 | 18:13:30 | 18:13:36 | 18:14:28 | 58 s |
 | #99 | 18:34:39 | 18:34:42 | 18:35:41 | 1 min 02 s |
 | #100 | 18:59:31 | 18:59:43 | 19:00:38 | 1 min 07 s |
+| #101 | 03:44:43 | 03:44:51 | 03:46:11 | 1 min 28 s |
 
 Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
-wurde. In den anderen acht Fällen war der Kommentar zum Merge-Zeitpunkt noch
-gar nicht da — #75, #85, #91, #92, #97, #98, #99 und #100 fehlten ihm zwischen
-zwei und zwölf Sekunden. Auf #92, #99 und #100 lag der Merge sogar vor dem
-*Start* des Laufs — sieben, eine und sieben Sekunden: Es gab zum Merge-Zeitpunkt nichts
+wurde. In den anderen neun Fällen war der Kommentar zum Merge-Zeitpunkt noch
+gar nicht da — #75, #85, #91, #92, #97, #98, #99, #100 und #101 fehlten ihm
+zwischen zwei und zwölf Sekunden. Auf #92, #99, #100 und #101 lag der Merge
+sogar vor dem *Start* des Laufs — sieben, eine, sieben und fünf Sekunden: Es gab zum Merge-Zeitpunkt nichts
 anzusehen, auch nicht für den, der hinsieht.
 
-Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
+Was das kostet, ist zweimal belegt. Auf #73 reichte Codex um 03:56:18 ein
 Review-Objekt mit einem P2-Befund ein, 1 min 44 s nach dem Merge. Der Befund
 war echt und traf genau die Lücke, die der gemergte PR schliessen sollte: Ein
 DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
 falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
 den geschlossenen PR wäre er in `main` liegengeblieben.
 
+Der zweite Fall ist #101, am 24.11.2026: ein P2-Befund um 03:46:09, 1 min 26 s
+nach dem Merge, auf den Absatz weiter oben über die Absage von #100. Er traf
+zu — der Schluss «derselbe Head lief später, also war an den Einstellungen
+nichts kaputt» ist überdehnt, weil die Einstellungen ausserhalb des Repos
+liegen und sich dazwischen geändert haben können. Der Satz war zum Zeitpunkt
+des Befunds schon in `main`; korrigiert wurde er im Folge-PR. Zweimal also,
+und beide Male traf der nachgereichte Befund genau die Stelle, die der
+gemergte PR gerade behandelte.
+
 Für die anderen acht ist **nicht** bekannt, ob es etwas zu finden gab;
-alle blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
+alle blieben befundlos. Befunde gab es damit auf #73 und #101 — beide nach
+dem Merge. Das ist Glück, keine Entwarnung — die Reihenfolge war
 dieselbe.
 
 Drei Handgriffe daraus:
@@ -602,6 +627,14 @@ Drei Handgriffe daraus:
   Minute verstreichen lassen, oder den Review mit `@codex review` auf dem
   offenen PR anstossen, statt ihn am Umschalten hängen zu lassen. Gemessen ist
   keiner von beiden — welcher trägt, ist offen.
+- **Wer zum Warten rät, liest vorher `merged_at`.** Am 22.11. und am
+  24.11.2026 wurde hier zweimal zum Warten geraten, als der Merge längst
+  erfolgt war — beide Male gestützt auf ein leeres `get_comments`. Dessen
+  Abwesenheit ist kein Status: Sie sagt, dass gerade kein Kommentar da ist,
+  nicht, dass noch Zeit ist. Auf #101 lag der Merge eine Sekunde nach «ready»
+  und zwei Sekunden vor der Abfrage, die nichts fand. Der Rat war damit selbst
+  der Fehler, vor dem der Abschnitt warnt — eine Ebene höher, weil nicht die
+  Uhr gelesen wurde, sondern eine Leerstelle für eine Auskunft genommen.
 - **Ein geschlossener PR ist kein Grund, nicht mehr hinzusehen.** Der Lauf
   läuft nach dem Merge weiter und reicht sein Ergebnis auch dann noch ein.
 
