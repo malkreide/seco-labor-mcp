@@ -424,7 +424,7 @@ was seither an ihm gemessen wurde.
 
 **Die Befundlos-Meldung ist weg, die Statustabelle nicht.** Einen Lauf ohne
 Befund meldete Codex früher als gewöhnlichen Issue-Kommentar («Codex Review:
-Didn't find any major issues»). Auf den acht befundlosen Läufen dieses Repos,
+Didn't find any major issues»). Auf den neun befundlosen Läufen dieses Repos,
 die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 *Review | Status | Commit | Review trigger* hinter dem Marker
 `<!-- codex-pull-request-review-summary -->`, auf «✅ Completed»:
@@ -439,6 +439,7 @@ die gemessen wurden, steht kein solcher Kommentar — nur die Tabelle
 | #97 | 22.11.2026 | `63182a2` | leer | keiner |
 | #98 | 22.11.2026 | `8bf12af` | leer | keiner |
 | #99 | 22.11.2026 | `d87669e` | leer | keiner |
+| #100 | 22.11.2026 | `f279973` | leer | keiner |
 
 Wer «geprüft und sauber» am Befundlos-Kommentar festmacht, findet ihn hier
 über zehn Wochen nicht und bucht jeden sauberen Lauf als ausgefallenen.
@@ -459,7 +460,7 @@ Statustabelle — und `get_reviews` leer. Es hat kein Lauf stattgefunden. Sieben
 Minuten vorher, auf #99, war derselbe Bot normal durchgelaufen.
 
 Das trifft die Regel darüber an ihrer schwächsten Stelle. `get_reviews` ist
-hier **leer wie bei allen acht befundlosen Läufen**; wer «sauber» an diesem
+hier **leer wie bei allen neun befundlosen Läufen**; wer «sauber» an diesem
 einen Signal festmacht, bucht einen PR als geprüft, den niemand angesehen hat.
 Das Paar trägt, weil es die Tabelle verlangt — aber nur, wenn man deren Fehlen
 auch bemerkt. Fehlt sie, ist das Fehlen die Auskunft: **Kein Statuskommentar
@@ -469,14 +470,32 @@ Dieselbe Klasse wie der 403, der sich als «Label nicht gefunden» ausgab: eine
 Störung, verpackt als Auskunft. Nur steckt die Verpackung hier nicht im
 Antworttext, sondern in dem, was gar nicht da ist.
 
-Was die Beobachtung **nicht** hergibt, ist der Grund. Die Meldung nennt keinen,
-und zwei Lesarten passen gleich gut. Entweder reagiert der Bot neu auch auf das
-Eröffnen eines Entwurfs und meldet dabei, dass er nicht laufen kann — #98 und
-#99 bekamen als Entwurf keinen Kommentar, #100 acht Sekunden nach dem Eröffnen
-einen. Oder in den sieben Minuten zwischen #99 und #100 hat sich an der
-Codex-Einrichtung etwas geändert. Welche zutrifft, ist ungemessen; die
-Einstellungen liegen nicht in diesem Repo, und dem Link in der Meldung zu
-folgen wäre eine Änderung daran, keine Messung.
+**Siebzehn Minuten später lief derselbe Bot auf demselben Head.** #100 wurde um
+18:59:29 auf «ready» gesetzt; der Lauf startete um 18:59:38, der
+Statuskommentar erschien um 18:59:43, und um 19:00:38 stand das Urteil —
+befundlos, Commit `f279973`, derselbe wie bei der Absage. Die Meldung hing also
+am **Auslöser**, nicht am Repo: Das Eröffnen eines Entwurfs bekommt sie, das
+Umschalten auf «ready» einen regulären Lauf.
+
+Hier standen zuerst zwei Lesarten, und die zweite — in den sieben Minuten
+zwischen #99 und #100 habe sich an der Codex-Einrichtung etwas geändert — ist
+damit widerlegt. Sie war nicht nötig, und sie hätte in die falsche Richtung
+geschickt: zu den Einstellungen, wo nichts kaputt war.
+
+Ungemessen bleibt, **warum** das Eröffnen eines Entwurfs überhaupt eine Absage
+auslöst, wo #98 und #99 als Entwurf gar keinen Kommentar bekamen. Dass die
+Meldung eine Umgebung verlangt, die der Review offenbar nicht braucht, legt
+zwei verschiedene Mechanismen nahe; belegt ist das nicht. Die Einstellungen
+liegen nicht in diesem Repo, und dem Link in der Meldung zu folgen wäre eine
+Änderung daran, keine Messung.
+
+**Die Lehre wird dadurch nicht kleiner, sondern genauer.** Um 18:42 war dieser
+PR wirklich ungeprüft, und das einzige Zeichen dafür war der fehlende
+Statuskommentar: `get_reviews` leer wie bei jedem befundlosen Lauf, CI grün,
+kein Konflikt. Wer in diesem Fenster gemergt hätte, hätte sich auf ein Signal
+gestützt, das nichts sagt. Dass siebzehn Minuten später doch ein Lauf kam,
+entlastet nicht — es macht den Fall häufiger, weil die Absage kein Dauerzustand
+ist, sondern ein Fenster, das sich wieder schliesst.
 
 **Seit dem 13.11.2026 sagt es ein Marker direkt.** Der Statuskommentar auf
 #91 trägt neben dem bekannten `codex-pull-request-review-summary` einen
@@ -499,8 +518,8 @@ Mitgewandert ist die Darstellung: Der Kommentar steckt jetzt in einem
 Zweimal hat die Form damit in zwei Monaten gewechselt. Wer seine Prüfung an
 einen Text bindet statt an ein Feld, baut sie jedes Mal neu.
 
-Was die acht Messungen **nicht** hergeben: dass der Kommentar abgeschafft
-wäre. Acht Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
+Was die neun Messungen **nicht** hergeben: dass der Kommentar abgeschafft
+wäre. Neun Läufe aus einem Repo sind kein Produktentscheid. Taucht er wieder
 auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 
 **Die Laufzeit taugt nicht als Wartezeit.** Derselbe Statuskommentar, von
@@ -517,12 +536,13 @@ auf, ist das kein Widerspruch, sondern das Ende der Spanne.
 | #97 | 22.11.2026 | 09:44:13 | 09:45:14 | 1 min 01 s |
 | #98 | 22.11.2026 | 18:13:36 | 18:14:28 | 52 s |
 | #99 | 22.11.2026 | 18:34:42 | 18:35:41 | 59 s |
+| #100 | 22.11.2026 | 18:59:43 | 19:00:38 | 55 s |
 
 Faktor vier zwischen dem längsten und dem kürzesten, ohne dass sich am Repo
-etwas geändert hätte. Sieben der acht Läufe liegen dabei zwischen 47 s und
+etwas geändert hätte. Acht der neun Läufe liegen dabei zwischen 47 s und
 1 min 01 s; die ganze Spanne entsteht aus #73 allein. Diese Häufung ist keine
-Zusage, sondern die Versuchung: Gerade weil sieben Messungen so eng
-beieinanderliegen, liest sich die achte wie eine Regel — und #73 zeigt, dass
+Zusage, sondern die Versuchung: Gerade weil so viele Messungen so eng
+beieinanderliegen, liest sich die nächste wie eine Regel — und #73 zeigt, dass
 es keine ist. Eine Regel wie «vier Minuten warten, dann ist es
 sicher» ist daraus nicht zu bauen; gelesen wird der Status, nicht die Uhr.
 
@@ -534,7 +554,7 @@ Marker stand um 16:26:07 noch `"status":"running"` mit
 `has_any_findings: null`, um 16:27:03 dann `"completed"` mit `false` — gleiche
 Kommentar-ID, unverändertes `created_at`.
 
-**Und achtmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
+**Und neunmal urteilte Codex erst nach dem Merge.** Gegenübergestellt der
 Merge-Zeitpunkt aus `merged_at` und derselbe Statuskommentar, von seinem
 Erscheinen bis zum Urteil:
 
@@ -548,12 +568,13 @@ Erscheinen bis zum Urteil:
 | #97 | 09:44:11 | 09:44:13 | 09:45:14 | 1 min 03 s |
 | #98 | 18:13:30 | 18:13:36 | 18:14:28 | 58 s |
 | #99 | 18:34:39 | 18:34:42 | 18:35:41 | 1 min 02 s |
+| #100 | 18:59:31 | 18:59:43 | 19:00:38 | 1 min 07 s |
 
 Zwei Formen: Auf #73 stand die Tabelle sichtbar auf «Running», als gemergt
-wurde. In den anderen sieben Fällen war der Kommentar zum Merge-Zeitpunkt noch
-gar nicht da — #75, #85, #91, #92, #97, #98 und #99 fehlten ihm zwischen zwei
-und zwölf Sekunden. Auf #92 und #99 lag der Merge sogar vor dem *Start* des
-Laufs, sieben beziehungsweise eine Sekunde: Es gab zum Merge-Zeitpunkt nichts
+wurde. In den anderen acht Fällen war der Kommentar zum Merge-Zeitpunkt noch
+gar nicht da — #75, #85, #91, #92, #97, #98, #99 und #100 fehlten ihm zwischen
+zwei und zwölf Sekunden. Auf #92, #99 und #100 lag der Merge sogar vor dem
+*Start* des Laufs — sieben, eine und sieben Sekunden: Es gab zum Merge-Zeitpunkt nichts
 anzusehen, auch nicht für den, der hinsieht.
 
 Was das kostet, ist einmal belegt. Auf #73 reichte Codex um 03:56:18 ein
@@ -563,7 +584,7 @@ DNS-Ausfall flog an der neuen Ausfall-Erkennung vorbei und hätte weiter das
 falsche Issue erzeugt. Behoben wurde er in einem Folge-PR; ohne den Blick in
 den geschlossenen PR wäre er in `main` liegengeblieben.
 
-Für die anderen sieben ist **nicht** bekannt, ob es etwas zu finden gab;
+Für die anderen acht ist **nicht** bekannt, ob es etwas zu finden gab;
 alle blieben befundlos. Das ist Glück, keine Entwarnung — die Reihenfolge war
 dieselbe.
 
