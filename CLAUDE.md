@@ -234,6 +234,49 @@ Beim Aufräumen gilt deshalb dieselbe Frage wie bei `lotId`: Was ist die
 *Vorgabe*, wenn man das Ding weglässt — nicht bloss, ob der aktuelle Wert
 etwas bewirkt.
 
+**Eine Pipe verschluckt den Exit-Code, und `&&` danach feuert trotzdem.** Am
+26.11.2026 sollten zwei bereits gemergte Branches im Remote gelöscht werden,
+mit diesem Aufruf:
+
+```bash
+git push origin --delete <a> <b> 2>&1 | tail -5 && echo "=== Remote danach:"
+```
+
+Der Push scheiterte am Agent-Proxy mit HTTP 403. Der Befehl endete trotzdem
+mit 0, weil `tail` den Status liefert und nicht `git`; das `&&` feuerte, die
+Zeile danach lief, und die Ausgabe las sich wie eine gelungene Folge. Gemessen
+mit git 2.43.0 an einer Löschung, die der Remote nicht kennt:
+
+| Aufruf | Exit |
+|---|---|
+| ohne Pipe | 1 |
+| in `tail -5` gepipet | **0** |
+| gepipet, `set -o pipefail` davor | 1 |
+| gepipet, danach `PIPESTATUS[0]` gelesen | 1 |
+
+Wo die Ausgabe durchgelassen wird, ist die letzte Zeile in allen drei Fällen
+dieselbe Fehlermeldung — unterschieden haben sie sich nur im Status. Wer durch
+eine Pipe liest, hat also genau das Signal nicht mehr, das die Ausgabe
+widerlegen könnte.
+
+Zwei Handgriffe daraus:
+
+- **Keine Pipe um einen Befehl, dessen Erfolg beurteilt werden soll.** Muss
+  gekürzt werden, dann `set -o pipefail` davor oder `PIPESTATUS[0]` danach.
+- **Kein `&&` hinter einer solchen Pipe.** Es liest den Status von `tail` und
+  sagt nichts über den Befehl davor — die Folgezeile läuft auch dann, wenn
+  nichts geschehen ist.
+
+Ungeklärt und als Beobachtung notiert: Die *letzte* Zeile der gescheiterten
+Löschung lautete «Everything up-to-date», vier Zeilen unter `error: RPC
+failed; HTTP 403`. Die naheliegende Erklärung — eine fehlgeschlagene
+Ref-Advertisement lasse jede Löschung wie erledigt aussehen — ist durch die
+Probe **widerlegt**: Eine Löschung, die der Remote nicht kennt, meldet
+`error: unable to delete 'x': remote ref does not exist` und endet mit 1.
+Woher die Zeile kam, bleibt offen. Sie steht hier, weil sie nach dem
+verschluckten Status das Einzige war, was noch zu lesen blieb — und weil die
+Erklärung, die ich zuerst dafür hatte, von der eigenen Probe gefallen ist.
+
 **`results[0]` ist nur so verlässlich wie die Zusicherung danach.** Pinnt die
 Abfrage einen bekannten Datensatz, ist der erste Treffer eine Drift-Wache und
 in Ordnung. Hängt die Zusicherung dagegen davon ab, *welche* Variante die

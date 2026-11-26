@@ -738,3 +738,169 @@ def test_die_anweisung_nennt_den_empfohlenen_aufruf_als_kode() -> None:
         "Der Erkenner nimmt Fliesstext fuer einen Kodeblock — dann ist die "
         "Zusicherung darueber immer gruen."
     )
+
+
+# ----------------------------------------------------------------------------
+# Der Pipe-Fund vom 26.11.2026
+#
+# `git push origin --delete … 2>&1 | tail -5 && echo …` scheiterte am Proxy mit
+# HTTP 403 und endete doch mit 0, weil `tail` den Status liefert. Das `&&`
+# feuerte, und die Ausgabe las sich wie eine gelungene Folge. Gemessen wird die
+# Tabelle, die CLAUDE.md dazu fuehrt — an einem echten, scheiternden git-Aufruf
+# ohne Netz: der Loeschung eines Refs, den der Remote nicht kennt.
+# ----------------------------------------------------------------------------
+
+_PIPE_SPALTEN = ("Aufruf", "Exit")
+
+# Beschriftung -> Shell-Gestalt des Aufrufs. Der Platzhalter {b} nimmt den
+# git-Befehl auf, damit keine Zeile ihn zweimal buchstabiert.
+_PIPE_FORMEN = {
+    "ohne Pipe": "{b}",
+    "in `tail -5` gepipet": "{b} 2>&1 | tail -5",
+    "gepipet, `set -o pipefail` davor": "set -o pipefail; {b} 2>&1 | tail -5",
+    "gepipet, danach `PIPESTATUS[0]` gelesen": (
+        "{b} 2>&1 | tail -5 >/dev/null; exit ${PIPESTATUS[0]}"
+    ),
+}
+
+
+def _pipe_tabelle() -> dict[str, str]:
+    """Die Zeilen der Exit-Code-Tabelle als {Beschriftung: Zellentext}.
+
+    Gesucht wird ueber die Spaltenkoepfe, wie bei der Prune-Tabelle oben.
+    Sternchen fallen weg: Die Null steht im Dokument fett, weil sie die
+    ueberraschende ist.
+    """
+    zeilen = [
+        [zelle.strip() for zelle in roh.strip().strip("|").split("|")]
+        for roh in _CLAUDE_MD.read_text(encoding="utf-8").splitlines()
+        if roh.lstrip().startswith("|")
+    ]
+    kopf = [i for i, z in enumerate(zeilen) if tuple(z) == _PIPE_SPALTEN]
+    assert len(kopf) == 1, (
+        f"Kopfzeile {_PIPE_SPALTEN} nicht eindeutig gefunden ({len(kopf)} "
+        "Treffer) — Absatz in CLAUDE.md umgebaut?"
+    )
+    gelesen = {}
+    for z in zeilen[kopf[0] + 1 :]:
+        if len(z) != 2 or set("".join(z)) <= set("-: "):
+            if gelesen:
+                break
+            continue
+        gelesen[z[0]] = z[1].replace("*", "").strip()
+    assert gelesen, "Die Exit-Code-Tabelle hat keine Datenzeilen."
+    return gelesen
+
+
+def _bash(befehl: str, *, cwd: pathlib.Path) -> tuple[int, str]:
+    fertig = subprocess.run(
+        ["bash", "-c", befehl],
+        cwd=cwd,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", **_UMGEBUNG},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return fertig.returncode, (fertig.stdout + fertig.stderr).strip()
+
+
+def _klon_mit_remote(arbeitsplatz: pathlib.Path) -> pathlib.Path:
+    """Ein Klon mit erreichbarem Remote — fuer einen Push, der sicher scheitert."""
+    fernab = arbeitsplatz / "fernab.git"
+    klon = arbeitsplatz / "klon"
+    _git("init", "--quiet", "--bare", str(fernab), cwd=arbeitsplatz)
+    _git("init", "--quiet", "-b", "main", str(klon), cwd=arbeitsplatz)
+    _git("commit", "--quiet", "--allow-empty", "-m", "Basis", cwd=klon)
+    _git("remote", "add", "origin", str(fernab), cwd=klon)
+    _git("push", "--quiet", "origin", "main", cwd=klon)
+    return klon
+
+
+def test_bash_steht_zur_verfuegung(tmp_path: pathlib.Path) -> None:
+    """Positivkontrolle: Ohne bash messen die Zusicherungen unten nichts.
+
+    Geprueft wird zugleich, dass `set -o pipefail` ueberhaupt verstanden wird —
+    eine Shell ohne diese Option liesse den Unterschied verschwinden, den die
+    Tabelle behauptet.
+    """
+    assert shutil.which("bash"), "bash fehlt — dieser Test misst nichts."
+    rc, _ = _bash("set -o pipefail; false | true", cwd=tmp_path)
+    assert rc != 0, "Diese Shell kennt `set -o pipefail` nicht."
+
+
+def test_die_pipe_tabelle_stimmt_mit_dem_gemessenen_verhalten_ueberein(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Alle Zeilen der Exit-Code-Tabelle gegen einen echt scheiternden Aufruf.
+
+    Die erste Zeile ist zugleich die Positivkontrolle: Scheitert der Aufruf
+    ohne Pipe nicht, dann misst der Rest nichts, und die Tabelle waere auch
+    ohne die Pipe-Mechanik gruen.
+    """
+    gelesen = _pipe_tabelle()
+    assert set(gelesen) == set(_PIPE_FORMEN), (
+        "Die Beschriftungen der Tabelle sind nicht die erwarteten.\n"
+        f"  im Dokument: {sorted(gelesen)}\n  erwartet:    {sorted(_PIPE_FORMEN)}"
+    )
+
+    befehl = "git push origin --delete gibtesnicht"
+    abweichungen: list[str] = []
+    letzte_zeilen: set[str] = set()
+
+    for nummer, (beschriftung, form) in enumerate(sorted(_PIPE_FORMEN.items())):
+        arbeitsplatz = tmp_path / f"pipe-{nummer}"
+        arbeitsplatz.mkdir()
+        klon = _klon_mit_remote(arbeitsplatz)
+        rc, ausgabe = _bash(form.replace("{b}", befehl), cwd=klon)
+        if ausgabe and "PIPESTATUS" not in form:
+            # Der Pfad des Wegwerf-Remotes steht in der Meldung und ist je
+            # Arbeitsplatz anders; verglichen wird die Meldung, nicht der Pfad.
+            letzte_zeilen.add(ausgabe.splitlines()[-1].split(" to '")[0])
+        erwartet = gelesen[beschriftung]
+        if str(rc) != erwartet:
+            abweichungen.append(f"«{beschriftung}»: CLAUDE.md sagt Exit {erwartet}, gemessen {rc}")
+
+    assert not abweichungen, "Tabelle und Shell gehen auseinander:\n  " + "\n  ".join(abweichungen)
+    assert gelesen["ohne Pipe"] == "1", (
+        "Die Positivkontrolle der Tabelle sagt, der Aufruf ohne Pipe scheitere "
+        "nicht — dann ist der ganze Absatz gegenstandslos."
+    )
+    # Die PIPESTATUS-Variante leitet die Ausgabe nach /dev/null und endet mit
+    # ihrer eigenen Zeile; sie bleibt hier draussen. Der Absatz sagt das auch
+    # so — zuerst stand dort «in allen Faellen», und dieser Test hat es
+    # widerlegt.
+    assert len(letzte_zeilen) == 1, (
+        "Die letzte Ausgabezeile ist nicht in allen durchgelassenen Faellen "
+        f"dieselbe; der Satz dazu in CLAUDE.md stimmt dann nicht: "
+        f"{sorted(letzte_zeilen)}"
+    )
+    assert len(_PIPE_FORMEN) - 1 == 3, (
+        "Es sind nicht mehr drei Aufrufe, die die Ausgabe durchlassen — dann "
+        "nennt der Absatz die falsche Zahl."
+    )
+
+
+def test_eine_loeschung_ohne_remote_ref_meldet_sich_deutlich(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Die widerlegte Erklaerung, als Zusicherung festgehalten.
+
+    Zuerst stand im Absatz die Vermutung, eine fehlgeschlagene
+    Ref-Advertisement lasse jede Loeschung wie erledigt aussehen — daher
+    «Everything up-to-date». Die Probe zeigt das Gegenteil: Eine Loeschung, die
+    der Remote nicht kennt, sagt es ausdruecklich und endet mit 1. Damit ist
+    die Vermutung vom Tisch und die Zeile bleibt unerklaert; CLAUDE.md sagt
+    das auch so.
+    """
+    klon = _klon_mit_remote(tmp_path)
+    rc, ausgabe = _bash("git push origin --delete gibtesnicht", cwd=klon)
+    assert rc == 1, f"Erwartet war Exit 1, gemessen {rc}:\n{ausgabe}"
+    assert "remote ref does not exist" in ausgabe, (
+        "Die Loeschung eines unbekannten Refs meldet das nicht mehr "
+        f"ausdruecklich. Dann waere die widerlegte Erklaerung neu zu pruefen:\n{ausgabe}"
+    )
+    assert "Everything up-to-date" not in ausgabe, (
+        "Die Loeschung eines unbekannten Refs meldet «Everything up-to-date» — "
+        "dann traegt die Erklaerung doch, und der Absatz in CLAUDE.md ist zu "
+        "korrigieren."
+    )

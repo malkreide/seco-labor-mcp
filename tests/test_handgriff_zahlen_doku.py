@@ -30,7 +30,7 @@ _CLAUDE_MD = _ROOT / "CLAUDE.md"
 
 # So viele Listen traegt die Datei. Die Zahl steht hier, damit ein Erkenner,
 # der ploetzlich nichts mehr findet, auffaellt statt leer durchzulaufen.
-_ERWARTETE_LISTEN = 3
+_ERWARTETE_LISTEN = 4
 
 _ZAHLWORT = {
     1: "Ein",
